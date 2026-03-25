@@ -484,44 +484,55 @@ TOOL_SOURCE_MAP = {
 }
 
 
-def run(query: str, config: dict = None) -> Generator[dict, None, None]:
-    """Run the agent loop, yielding events for each step."""
-    config = config or {}
-    sources = config.get("sources", {})
-    model = config.get("model") or MODEL
-
-    # Filter tools based on UI toggles
-    disabled_tools = set()
-    for source_key, tool_name in TOOL_SOURCE_MAP.items():
-        if sources.get(source_key) is False:
-            disabled_tools.add(tool_name)
-
-    active_tools = [t for t in TOOLS if t["function"]["name"] not in disabled_tools]
-
-    client = OpenAI(
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.environ["OPENROUTER_API_KEY"],
+def _generate_plan(client, model: str, query: str) -> str:
+    """Generate a research plan before executing."""
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=512,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a research planner. Given a query, output a brief research plan "
+                    "as a numbered list (3-5 steps). Each step should be one sentence. "
+                    "Focus on WHAT you'll search for, not HOW. No preamble, just the list."
+                ),
+            },
+            {"role": "user", "content": query},
+        ],
     )
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": query},
-    ]
+    return response.choices[0].message.content or ""
 
-    yield event("start", query=query, model=model)
 
-    # Collect media from tool results to append to report
-    collected_images = []
-    collected_videos = []
-    collected_news = []
-    collected_docs = []
-    collected_social = []
+def _generate_followups(client, model: str, query: str) -> list[str]:
+    """Generate clarifying questions before research."""
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=256,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You help refine research queries. Given a query, generate exactly 3 short "
+                    "follow-up questions that would help narrow the research. Format: one question "
+                    "per line, no numbering, no bullets. Keep each under 60 characters."
+                ),
+            },
+            {"role": "user", "content": query},
+        ],
+    )
+    text = response.choices[0].message.content or ""
+    return [q.strip() for q in text.strip().split("\n") if q.strip()][:3]
 
+
+def _run_agent_loop(client, model, messages, active_tools, collected, events):
+    """Run the core tool-calling loop. Appends events to the list, returns report content."""
     iteration = 0
-    max_iterations = 15
+    max_iterations = 12
 
     while iteration < max_iterations:
         iteration += 1
-        yield event("thinking", iteration=iteration)
+        events.append(event("thinking", iteration=iteration))
 
         response = client.chat.completions.create(
             model=model,
@@ -534,47 +545,40 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
 
         if msg.tool_calls:
             messages.append(msg)
+            key_map = {
+                "search_images": "images",
+                "search_videos": "videos",
+                "search_news": "news",
+                "search_documents": "docs",
+                "search_social": "social",
+            }
             for tc in msg.tool_calls:
                 args = json.loads(tc.function.arguments)
                 label = args.get("query") or args.get("url") or args.get("youtube_url", "")
-                yield event("tool_call", tool=tc.function.name, args=args, label=label[:120])
+                events.append(event("tool_call", tool=tc.function.name, args=args, label=label[:120]))
 
                 result = execute_tool(tc.function.name, args)
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tc.id,
-                    "content": result,
-                })
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
 
-                # Collect media results for the appendix
                 try:
                     parsed = json.loads(result)
                     if isinstance(parsed, list):
-                        yield event("tool_result", tool=tc.function.name, count=len(parsed))
-                        if tc.function.name == "search_images":
-                            collected_images.extend(parsed)
-                        elif tc.function.name == "search_videos":
-                            collected_videos.extend(parsed)
-                        elif tc.function.name == "search_news":
-                            collected_news.extend(parsed)
-                        elif tc.function.name == "search_documents":
-                            collected_docs.extend(parsed)
-                        elif tc.function.name == "search_social":
-                            collected_social.extend(parsed)
+                        events.append(event("tool_result", tool=tc.function.name, count=len(parsed)))
+                        if tc.function.name in key_map:
+                            collected[key_map[tc.function.name]].extend(parsed)
                     elif "error" in parsed:
                         if tc.function.name == "search_social":
-                            collected_social.append(parsed)
-                        yield event("tool_error", tool=tc.function.name, error=parsed["error"])
+                            collected["social"].append(parsed)
+                        events.append(event("tool_error", tool=tc.function.name, error=parsed["error"]))
                     else:
                         title = parsed.get("title", "") or parsed.get("video_id", "")
-                        yield event("tool_result", tool=tc.function.name, title=title)
+                        events.append(event("tool_result", tool=tc.function.name, title=title))
                 except Exception:
-                    yield event("tool_result", tool=tc.function.name)
+                    events.append(event("tool_result", tool=tc.function.name))
             continue
 
         content = msg.content or ""
 
-        # DeepSeek outputs planning text between tool rounds. Detect and redirect.
         is_planning = (
             len(content) < 1000
             and not any(h in content for h in ["## ", "### ", "**Summary**", "**Sources**", "**Key"])
@@ -588,16 +592,87 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
             })
             continue
 
-        # Append collected media to report (don't rely on the model to format these)
-        appendix = _build_media_appendix(collected_images, collected_videos, collected_news, collected_docs, collected_social)
-        if appendix:
-            content = content.rstrip() + "\n\n" + appendix
+        return content
 
-        yield event("report", content=content)
-        yield event("done")
-        return
+    return ""
 
-    yield event("error", message="Max iterations reached")
+
+def run(query: str, config: dict = None) -> Generator[dict, None, None]:
+    """Run the full research pipeline with plan, questions, research, and gap analysis."""
+    config = config or {}
+    sources = config.get("sources", {})
+    model = config.get("model") or MODEL
+
+    disabled_tools = set()
+    for source_key, tool_name in TOOL_SOURCE_MAP.items():
+        if sources.get(source_key) is False:
+            disabled_tools.add(tool_name)
+
+    active_tools = [t for t in TOOLS if t["function"]["name"] not in disabled_tools]
+
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    )
+
+    yield event("start", query=query, model=model)
+
+    # Phase 1: Follow-up questions
+    yield event("phase", name="Generating clarifying questions...")
+    try:
+        followups = _generate_followups(client, model, query)
+        if followups:
+            yield event("followups", questions=followups)
+    except Exception:
+        pass  # Non-critical, continue without
+
+    # Phase 2: Research plan
+    yield event("phase", name="Planning research...")
+    try:
+        plan = _generate_plan(client, model, query)
+        if plan:
+            yield event("plan", content=plan)
+    except Exception:
+        pass  # Non-critical, continue without
+
+    # Phase 3: Execute research
+    yield event("phase", name="Researching...")
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": query},
+    ]
+
+    collected = {"images": [], "videos": [], "news": [], "docs": [], "social": []}
+
+    report_content = _run_agent_loop(client, model, messages, active_tools, collected, event_sink := [])
+    for ev in event_sink:
+        yield ev
+
+    # Phase 4: Gap analysis and second pass
+    if report_content and "Gaps" in report_content:
+        yield event("phase", name="Analyzing gaps, doing follow-up research...")
+        messages.append({"role": "assistant", "content": report_content})
+        messages.append({
+            "role": "user",
+            "content": (
+                "Look at the gaps you identified. Do ONE more round of targeted research "
+                "to fill the most important gaps. Use your tools, then rewrite the full report "
+                "incorporating the new findings. Keep the same structure."
+            ),
+        })
+        report_content = _run_agent_loop(client, model, messages, active_tools, collected, event_sink2 := [])
+        for ev in event_sink2:
+            yield ev
+
+    # Append media
+    appendix = _build_media_appendix(
+        collected["images"], collected["videos"], collected["news"],
+        collected["docs"], collected["social"]
+    )
+    if appendix:
+        report_content = (report_content or "").rstrip() + "\n\n" + appendix
+
+    yield event("report", content=report_content or "No results found.")
     yield event("done")
 
 

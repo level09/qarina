@@ -307,6 +307,72 @@
   .toggles select:focus { border-color: var(--accent); }
   .sep { width: 1px; height: 20px; background: var(--border-light); margin: 0 4px; }
 
+  /* Plan & followups */
+  .plan-box, .followups-box {
+    background: var(--surface);
+    border: 1.5px solid var(--border-light);
+    border-radius: 10px;
+    padding: 14px 18px;
+    font-size: 13px;
+    line-height: 1.7;
+    animation: fadeIn 0.2s ease;
+  }
+  .plan-box .title, .followups-box .title {
+    font-family: var(--font-heading);
+    font-weight: 700;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text2);
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .followups-box .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .followups-box .q-chip {
+    font-size: 12px;
+    padding: 5px 12px;
+    background: var(--accent-bg);
+    color: var(--accent);
+    border: 1.5px solid var(--accent);
+    border-radius: 20px;
+    cursor: default;
+  }
+
+  /* Download button */
+  .download-bar {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: -8px;
+  }
+  .download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 6px 14px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    box-shadow: var(--shadow-sm);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .download-btn:hover {
+    transform: translate(-1px, -1px);
+    box-shadow: 3px 3px 0 var(--border);
+  }
+  .download-btn i { font-size: 14px; }
+
   /* Empty state */
   .empty {
     text-align: center;
@@ -439,9 +505,11 @@ function go() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
 
+  let reportMarkdown = '';
+
   ws.onopen = () => {
     ws.send(JSON.stringify({ query: q, config: getConfig() }));
-    setStatus('Researching...');
+    setStatus('Starting...');
   };
 
   ws.onmessage = (e) => {
@@ -449,6 +517,25 @@ function go() {
 
     if (ev.type === 'start') {
       modelTag.textContent = ev.model.split('/').pop();
+    }
+
+    if (ev.type === 'phase') {
+      setStatus(ev.name);
+    }
+
+    if (ev.type === 'followups') {
+      const box = document.createElement('div');
+      box.className = 'followups-box';
+      box.innerHTML = '<div class="title"><i class="ti ti-help-circle"></i> Suggested focus areas</div><div class="chips">' +
+        ev.questions.map(q => `<span class="q-chip">${escHtml(q)}</span>`).join('') + '</div>';
+      feed.appendChild(box);
+    }
+
+    if (ev.type === 'plan') {
+      const box = document.createElement('div');
+      box.className = 'plan-box';
+      box.innerHTML = '<div class="title"><i class="ti ti-list-check"></i> Research Plan</div>' + md(ev.content);
+      feed.appendChild(box);
     }
 
     if (ev.type === 'thinking') {
@@ -481,10 +568,25 @@ function go() {
 
     if (ev.type === 'report') {
       status.remove();
+      reportMarkdown = ev.content;
       const div = document.createElement('div');
       div.className = 'report';
       div.innerHTML = md(ev.content);
       output.appendChild(div);
+
+      // Download bar
+      const bar = document.createElement('div');
+      bar.className = 'download-bar';
+      bar.innerHTML = '<button class="download-btn" id="dl-md"><i class="ti ti-download"></i> Markdown</button>';
+      output.appendChild(bar);
+      document.getElementById('dl-md').addEventListener('click', () => {
+        const blob = new Blob([reportMarkdown], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'research-report.md';
+        a.click();
+      });
+
       div.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
