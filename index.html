@@ -6,7 +6,6 @@
 <title>Research Agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.31.0/dist/tabler-icons.min.css">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -255,6 +254,29 @@
     border: 2px solid var(--border);
     margin: 10px 0;
   }
+  .report table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 13px;
+    border: 2px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .report th, .report td {
+    padding: 8px 12px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-light);
+  }
+  .report th {
+    background: var(--surface2);
+    font-weight: 600;
+    font-family: var(--font-heading);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .report tr:last-child td { border-bottom: none; }
 
   /* Toggles */
   .toggles {
@@ -400,7 +422,7 @@
 <body>
 
 <header>
-  <div class="logo"><i class="ti ti-brain"></i></div>
+  <div class="logo" id="logo-icon"></div>
   <h1>Research Agent</h1>
   <span class="tag" id="model-tag">ready</span>
 </header>
@@ -408,16 +430,16 @@
 <main>
   <div class="search-box">
     <textarea id="query" rows="2" placeholder="What do you want to research?"></textarea>
-    <button id="go" aria-label="Run research"><i class="ti ti-arrow-right"></i></button>
+    <button id="go" aria-label="Run research" class="go-btn"></button>
   </div>
 
   <div class="toggles">
     <label>Sources:</label>
-    <span class="chip active" data-tool="images"><i class="ti ti-photo"></i> Images</span>
-    <span class="chip active" data-tool="videos"><i class="ti ti-player-play"></i> Videos</span>
-    <span class="chip active" data-tool="news"><i class="ti ti-news"></i> News</span>
-    <span class="chip active" data-tool="docs"><i class="ti ti-file-text"></i> Documents</span>
-    <span class="chip" data-tool="social"><i class="ti ti-brand-twitter"></i> Social</span>
+    <span class="chip active" data-tool="images">Images</span>
+    <span class="chip active" data-tool="videos">Videos</span>
+    <span class="chip active" data-tool="news">News</span>
+    <span class="chip active" data-tool="docs">Documents</span>
+    <span class="chip" data-tool="social">Social</span>
     <div class="sep"></div>
     <select id="model-select">
       <option value="deepseek/deepseek-chat">DeepSeek V3</option>
@@ -428,7 +450,7 @@
 
   <div id="output">
     <div class="empty">
-      <div class="icon-big"><i class="ti ti-world-search"></i></div>
+      <div class="icon-big" id="empty-icon"></div>
       <p><strong>Multi-source AI research</strong></p>
       <p>Web, images, videos, news, documents, social media</p>
     </div>
@@ -442,15 +464,35 @@ const btn = $('#go');
 const output = $('#output');
 const modelTag = $('#model-tag');
 
+// Inline SVG icons (no CDN dependency)
+const S = (d) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
+const SVG = {
+  search:   S('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
+  photo:    S('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>'),
+  play:     S('<polygon points="5 3 19 12 5 21 5 3"/>'),
+  news:     S('<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>'),
+  file:     S('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
+  book:     S('<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'),
+  chat:     S('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  social:   S('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'),
+  brain:    S('<circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0-4 12.9V22h8v-7.1A7 7 0 0 0 12 2z"/>'),
+  arrow:    S('<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>'),
+  globe:    S('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
+  warn:     S('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+  help:     S('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
+  list:     S('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'),
+  download: S('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'),
+};
+
 const TOOL_META = {
-  web_research:         { icon: 'ti-search',          cls: 'research' },
-  search_images:        { icon: 'ti-photo',            cls: 'images' },
-  search_videos:        { icon: 'ti-player-play',      cls: 'videos' },
-  search_news:          { icon: 'ti-news',             cls: 'news' },
-  search_documents:     { icon: 'ti-file-text',        cls: 'docs' },
-  read_page:            { icon: 'ti-book',             cls: 'read' },
-  get_video_transcript: { icon: 'ti-message-language', cls: 'transcript' },
-  search_social:        { icon: 'ti-brand-twitter',    cls: 'social' },
+  web_research:         { svg: SVG.search, cls: 'research' },
+  search_images:        { svg: SVG.photo,  cls: 'images' },
+  search_videos:        { svg: SVG.play,   cls: 'videos' },
+  search_news:          { svg: SVG.news,   cls: 'news' },
+  search_documents:     { svg: SVG.file,   cls: 'docs' },
+  read_page:            { svg: SVG.book,   cls: 'read' },
+  get_video_transcript: { svg: SVG.chat,   cls: 'transcript' },
+  search_social:        { svg: SVG.social, cls: 'social' },
 };
 
 function md(text) {
@@ -513,6 +555,31 @@ function md(text) {
     '<img src="$1" loading="lazy">'
   );
 
+  // Convert markdown tables
+  html = html.replace(
+    /(?:<p>\|.*\|<\/p>\n?)+/g,
+    (tableBlock) => {
+      const rows = tableBlock
+        .replace(/<\/?p>/g, '')
+        .trim()
+        .split('\n')
+        .filter(r => r.trim());
+      if (rows.length < 2) return tableBlock;
+      // Skip separator row (|---|---|)
+      const dataRows = rows.filter(r => !/^\|[\s\-:|]+\|$/.test(r.trim()));
+      if (dataRows.length === 0) return tableBlock;
+      const parseRow = (r) => r.split('|').slice(1, -1).map(c => c.trim());
+      const headerCells = parseRow(dataRows[0]);
+      let t = '<table><thead><tr>' + headerCells.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+      for (let i = 1; i < dataRows.length; i++) {
+        const cells = parseRow(dataRows[i]);
+        t += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
+      }
+      t += '</tbody></table>';
+      return t;
+    }
+  );
+
   // Clean up empty paragraphs
   html = html.replace(/<p>\s*<\/p>/g, '');
 
@@ -560,7 +627,7 @@ function go() {
     if (ev.type === 'followups') {
       const box = document.createElement('div');
       box.className = 'followups-box';
-      box.innerHTML = '<div class="title"><i class="ti ti-help-circle"></i> Suggested focus areas</div><div class="chips">' +
+      box.innerHTML = '<div class="title">' + SVG.help + ' Suggested focus areas</div><div class="chips">' +
         ev.questions.map(q => `<span class="q-chip">${escHtml(q)}</span>`).join('') + '</div>';
       feed.appendChild(box);
     }
@@ -568,7 +635,7 @@ function go() {
     if (ev.type === 'plan') {
       const box = document.createElement('div');
       box.className = 'plan-box';
-      box.innerHTML = '<div class="title"><i class="ti ti-list-check"></i> Research Plan</div>' + md(ev.content);
+      box.innerHTML = '<div class="title">' + SVG.list + ' Research Plan</div>' + md(ev.content);
       feed.appendChild(box);
     }
 
@@ -577,11 +644,11 @@ function go() {
     }
 
     if (ev.type === 'tool_call') {
-      const meta = TOOL_META[ev.tool] || { icon: 'ti-help', cls: 'think' };
+      const meta = TOOL_META[ev.tool] || { svg: SVG.help, cls: 'think' };
       const name = ev.tool.replace(/_/g, ' ');
       const el = document.createElement('div');
       el.className = 'step';
-      el.innerHTML = `<div class="icon ${meta.cls}"><i class="ti ${meta.icon}"></i></div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
+      el.innerHTML = `<div class="icon ${meta.cls}">${meta.svg}</div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
       feed.appendChild(el);
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -589,12 +656,12 @@ function go() {
     if (ev.type === 'tool_error') {
       const el = document.createElement('div');
       el.className = 'step';
-      el.innerHTML = '<div class="icon err"><i class="ti ti-alert-triangle"></i></div><div class="label"><strong>Error</strong> ' + escHtml(ev.error) + '</div>';
+      el.innerHTML = '<div class="icon err">!</div><div class="label"><strong>Error</strong> ' + escHtml(ev.error) + '</div>';
       feed.appendChild(el);
     }
 
     if (ev.type === 'error') {
-      status.querySelector('.icon').innerHTML = '<i class="ti ti-alert-triangle"></i>';
+      status.querySelector('.icon').innerHTML = '!';
       status.querySelector('.icon').className = 'icon err';
       setStatus(ev.message);
       btn.disabled = false;
@@ -611,7 +678,7 @@ function go() {
       // Download bar
       const bar = document.createElement('div');
       bar.className = 'download-bar';
-      bar.innerHTML = '<button class="download-btn" id="dl-md"><i class="ti ti-download"></i> Markdown</button>';
+      bar.innerHTML = '<button class="download-btn" id="dl-md">' + SVG.download + ' Markdown</button>';
       output.appendChild(bar);
       document.getElementById('dl-md').addEventListener('click', () => {
         const blob = new Blob([reportMarkdown], { type: 'text/markdown' });
@@ -631,7 +698,7 @@ function go() {
   };
 
   ws.onerror = () => {
-    status.querySelector('.icon').innerHTML = '<i class="ti ti-alert-triangle"></i>';
+    status.querySelector('.icon').innerHTML = '!';
     status.querySelector('.icon').className = 'icon err';
     setStatus('Could not connect to server');
     btn.disabled = false;
@@ -661,6 +728,11 @@ function getConfig() {
     model: $('#model-select').value,
   };
 }
+
+// Set inline SVG icons for static elements
+$('#logo-icon').innerHTML = SVG.brain;
+$('.go-btn').innerHTML = SVG.arrow;
+$('#empty-icon').innerHTML = SVG.globe;
 
 btn.addEventListener('click', go);
 query.addEventListener('keydown', (e) => {
