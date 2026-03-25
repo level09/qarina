@@ -637,8 +637,47 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
 
     # Phase 3: Execute research
     yield event("phase", name="Researching...")
+
+    # Build dynamic system prompt based on active tools
+    active_tool_names = {t["function"]["name"] for t in active_tools}
+    tool_lines = []
+    for t in active_tools:
+        name = t["function"]["name"]
+        desc = t["function"]["description"].split(".")[0]
+        tool_lines.append(f"- **{name}**: {desc}.")
+
+    must_use = []
+    if "search_images" in active_tool_names:
+        must_use.append("search_images")
+    if "search_videos" in active_tool_names:
+        must_use.append("search_videos")
+    if "search_news" in active_tool_names:
+        must_use.append("search_news")
+    if "search_documents" in active_tool_names:
+        must_use.append("search_documents")
+
+    must_use_str = ", ".join(must_use)
+    must_use_instruction = f"\nYou MUST use at least web_research and {must_use_str} before writing your report." if must_use else ""
+
+    dynamic_prompt = f"""\
+You are a deep research agent. Your job is to find, extract, and synthesize \
+information from the web on any topic the user asks about.
+
+Your available tools:
+{chr(10).join(tool_lines)}
+
+Use web_research as your PRIMARY tool for factual investigation.{must_use_instruction}
+
+When done, write a structured report with:
+- **Summary**: Key findings in 2-3 sentences
+- **Sources**: URLs with what each contributed
+- **Key Findings**: Organized by theme
+- **Gaps**: What's still missing or unverified
+
+Do NOT include images, videos, or documents sections. Those are appended automatically."""
+
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "system", "content": dynamic_prompt},
         {"role": "user", "content": query},
     ]
 

@@ -454,34 +454,68 @@ const TOOL_META = {
 };
 
 function md(text) {
-  let html = text
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
-    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/^---+$/gm, '<hr>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" loading="lazy">')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+  // Normalize line endings
+  text = text.replace(/\r\n/g, '\n');
 
-  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+  // Extract code blocks first to protect them
+  const codeBlocks = [];
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
+    codeBlocks.push(`<pre><code>${escHtml(code.trim())}</code></pre>`);
+    return `%%CODE_BLOCK_${codeBlocks.length - 1}%%`;
+  });
+
+  let html = text
+    // headings (with optional ** wrapping)
+    .replace(/^#{4}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h4>$1</h4>')
+    .replace(/^#{3}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h3>$1</h3>')
+    .replace(/^#{2}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h2>$1</h2>')
+    .replace(/^#{1}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h1>$1</h1>')
+    // hr
+    .replace(/^---+$/gm, '<hr>')
+    // bold (handle ** and __)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/__(.+?)__/g, '<strong>$1</strong>')
+    // italic
+    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
+    // images
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" loading="lazy">')
+    // links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // blockquote
+    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+    // unordered list (handle -, *, +)
+    .replace(/^[\-\*\+]\s+(.+)$/gm, '<li>$1</li>')
+    // ordered list
+    .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li>$1</li>');
+
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li>[\s\S]*?<\/li>\s*)+)/g, '<ul>$1</ul>');
+
+  // Wrap remaining plain lines in <p>, skip empty and already-wrapped
   html = html.split('\n').map(line => {
     const t = line.trim();
     if (!t) return '';
-    if (/^<[hupob]|^<li|^<hr|^<pre|^<img|^<ul|^<block/i.test(t)) return line;
+    if (/^<[hupob]|^<li|^<hr|^<pre|^<img|^<ul|^<block|^%%CODE/i.test(t)) return line;
     return `<p>${t}</p>`;
   }).join('\n');
 
+  // Restore code blocks
+  codeBlocks.forEach((block, i) => {
+    html = html.replace(`<p>%%CODE_BLOCK_${i}%%</p>`, block);
+    html = html.replace(`%%CODE_BLOCK_${i}%%`, block);
+  });
+
+  // Bare image URLs as img tags
   html = html.replace(
     /<p>(https?:\/\/[^\s<]+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?[^\s<]*)?)<\/p>/gi,
     '<img src="$1" loading="lazy">'
   );
+
+  // Clean up empty paragraphs
+  html = html.replace(/<p>\s*<\/p>/g, '');
+
   return html;
 }
 
