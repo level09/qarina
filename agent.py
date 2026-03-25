@@ -475,8 +475,29 @@ def event(kind: str, **data) -> dict:
     return {"type": kind, **data}
 
 
-def run(query: str) -> Generator[dict, None, None]:
+TOOL_SOURCE_MAP = {
+    "images": "search_images",
+    "videos": "search_videos",
+    "news": "search_news",
+    "docs": "search_documents",
+    "social": "search_social",
+}
+
+
+def run(query: str, config: dict = None) -> Generator[dict, None, None]:
     """Run the agent loop, yielding events for each step."""
+    config = config or {}
+    sources = config.get("sources", {})
+    model = config.get("model") or MODEL
+
+    # Filter tools based on UI toggles
+    disabled_tools = set()
+    for source_key, tool_name in TOOL_SOURCE_MAP.items():
+        if sources.get(source_key) is False:
+            disabled_tools.add(tool_name)
+
+    active_tools = [t for t in TOOLS if t["function"]["name"] not in disabled_tools]
+
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
@@ -486,7 +507,7 @@ def run(query: str) -> Generator[dict, None, None]:
         {"role": "user", "content": query},
     ]
 
-    yield event("start", query=query, model=MODEL)
+    yield event("start", query=query, model=model)
 
     # Collect media from tool results to append to report
     collected_images = []
@@ -503,9 +524,9 @@ def run(query: str) -> Generator[dict, None, None]:
         yield event("thinking", iteration=iteration)
 
         response = client.chat.completions.create(
-            model=MODEL,
+            model=model,
             max_tokens=4096,
-            tools=TOOLS,
+            tools=active_tools,
             messages=messages,
         )
 

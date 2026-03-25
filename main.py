@@ -32,13 +32,14 @@ async def ws_research(ws: WebSocket):
         await ws.close()
         return
 
-    log.info(f"Research query: {query}")
+    config = data.get("config", {})
+    log.info(f"Research query: {query} | config: {config}")
     q = asyncio.Queue()
     loop = asyncio.get_running_loop()
 
     def worker():
         try:
-            for ev in run(query):
+            for ev in run(query, config=config):
                 loop.call_soon_threadsafe(q.put_nowait, ev)
         except Exception as e:
             log.error(f"Agent error: {e}", exc_info=True)
