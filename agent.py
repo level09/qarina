@@ -183,15 +183,10 @@ When you have enough information, write a structured research report with:
 - **Summary**: Key findings in 2-3 sentences
 - **Sources**: List of URLs with what each contributed
 - **Key Findings**: Detailed findings organized by theme
-- **Images**: For EACH image found, include it as a markdown image: ![description](URL)
-- **Videos**: For EACH video found, include it as a markdown link: [title](URL)
-- **Documents**: For EACH PDF/report found, include it as a markdown link: [title](URL)
 - **Gaps**: What information is still missing or unverified
 
-CRITICAL: In the Images section, you MUST use markdown image syntax ![alt](url) with the \
-actual image URLs from search_images results. Use the img_src or url field from the results. \
-In Videos and Documents sections, use markdown links [title](url) with actual URLs. \
-Do NOT just mention source names without URLs. Every media item must have a clickable link or embedded image."""
+Do NOT include images, videos, or documents sections in your report. \
+Those will be appended automatically from your search results."""
 
 
 http = httpx.Client(timeout=60.0)
@@ -324,6 +319,62 @@ def execute_tool(name: str, args: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
+def _build_media_appendix(images, videos, news, docs) -> str:
+    """Build a markdown appendix with all collected media, injected server-side."""
+    sections = []
+
+    if images:
+        lines = ["---", "## Images"]
+        for img in images[:8]:
+            url = img.get("url", "")
+            title = img.get("title", "").replace("[", "").replace("]", "") or "Image"
+            source = img.get("source", "")
+            if url:
+                lines.append(f"![{title}]({url})")
+                if source:
+                    lines.append(f"*Source: {source}*")
+                lines.append("")
+        sections.append("\n".join(lines))
+
+    if videos:
+        lines = ["---", "## Videos"]
+        for vid in videos[:6]:
+            url = vid.get("url", "")
+            title = vid.get("title", "") or "Video"
+            duration = vid.get("duration", "")
+            thumb = vid.get("thumbnail", "")
+            if url:
+                dur_str = f" ({duration})" if duration else ""
+                if thumb:
+                    lines.append(f"[![{title}]({thumb})]({url})")
+                lines.append(f"[{title}{dur_str}]({url})")
+                lines.append("")
+        sections.append("\n".join(lines))
+
+    if news:
+        lines = ["---", "## Recent News"]
+        for item in news[:6]:
+            url = item.get("url", "")
+            title = item.get("title", "") or "Article"
+            date = item.get("date", "")
+            source = item.get("source", "")
+            if url:
+                meta = " | ".join(filter(None, [source, date[:10] if date else ""]))
+                lines.append(f"- [{title}]({url})" + (f" *({meta})*" if meta else ""))
+        sections.append("\n".join(lines))
+
+    if docs:
+        lines = ["---", "## Documents & Reports"]
+        for doc in docs[:6]:
+            url = doc.get("url", "")
+            title = doc.get("title", "") or "Document"
+            if url:
+                lines.append(f"- [{title}]({url})")
+        sections.append("\n".join(lines))
+
+    return "\n\n".join(sections)
+
+
 def event(kind: str, **data) -> dict:
     return {"type": kind, **data}
 
@@ -340,6 +391,12 @@ def run(query: str) -> Generator[dict, None, None]:
     ]
 
     yield event("start", query=query, model=MODEL)
+
+    # Collect media from tool results to append to report
+    collected_images = []
+    collected_videos = []
+    collected_news = []
+    collected_docs = []
 
     iteration = 0
     max_iterations = 15
@@ -371,10 +428,19 @@ def run(query: str) -> Generator[dict, None, None]:
                     "content": result,
                 })
 
+                # Collect media results for the appendix
                 try:
                     parsed = json.loads(result)
                     if isinstance(parsed, list):
                         yield event("tool_result", tool=tc.function.name, count=len(parsed))
+                        if tc.function.name == "search_images":
+                            collected_images.extend(parsed)
+                        elif tc.function.name == "search_videos":
+                            collected_videos.extend(parsed)
+                        elif tc.function.name == "search_news":
+                            collected_news.extend(parsed)
+                        elif tc.function.name == "search_documents":
+                            collected_docs.extend(parsed)
                     elif "error" in parsed:
                         yield event("tool_error", tool=tc.function.name, error=parsed["error"])
                     else:
@@ -386,8 +452,7 @@ def run(query: str) -> Generator[dict, None, None]:
 
         content = msg.content or ""
 
-        # DeepSeek outputs planning text ("I will now...", "Let me search...")
-        # between tool rounds instead of just calling tools. Detect and redirect.
+        # DeepSeek outputs planning text between tool rounds. Detect and redirect.
         is_planning = (
             len(content) < 1000
             and not any(h in content for h in ["## ", "### ", "**Summary**", "**Sources**", "**Key"])
@@ -401,7 +466,11 @@ def run(query: str) -> Generator[dict, None, None]:
             })
             continue
 
-        # Final report
+        # Append collected media to report (don't rely on the model to format these)
+        appendix = _build_media_appendix(collected_images, collected_videos, collected_news, collected_docs)
+        if appendix:
+            content = content.rstrip() + "\n\n" + appendix
+
         yield event("report", content=content)
         yield event("done")
         return
