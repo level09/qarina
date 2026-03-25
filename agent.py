@@ -1,5 +1,5 @@
 """
-Research agent for Bayanat team.
+Multi-source research agent.
 Uses OpenRouter (DeepSeek default) as orchestrator with multiple research sources:
 - Perplexity Sonar (via OpenRouter) for AI-powered web research
 - SearXNG for image, video, news, and document search
@@ -176,9 +176,8 @@ TOOLS = [
 ]
 
 SYSTEM_PROMPT = """\
-You are a research agent for human rights investigators. Your job is to find, \
-extract, and synthesize information from the web about human rights cases, \
-violations, news, reports, and related materials.
+You are a deep research agent. Your job is to find, extract, and synthesize \
+information from the web on any topic the user asks about.
 
 You have access to these tools:
 

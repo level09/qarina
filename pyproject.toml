@@ -1,7 +1,7 @@
 [project]
 name = "research-agent"
 version = "0.2.0"
-description = "AI research agent for human rights investigations"
+description = "Multi-source AI research agent with streaming UI"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
