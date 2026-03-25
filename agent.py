@@ -149,6 +149,30 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_social",
+            "description": (
+                "Search social media platforms. Use when the topic involves public discourse, "
+                "eyewitness accounts, activist posts, or community discussions. "
+                "Supported platforms: twitter (uses AI-powered X search), facebook, instagram, "
+                "reddit, telegram. Use this when social media perspectives would add value."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "platform": {
+                        "type": "string",
+                        "description": "Platform to search: twitter, facebook, instagram, reddit, telegram",
+                        "enum": ["twitter", "facebook", "instagram", "reddit", "telegram"],
+                    },
+                },
+                "required": ["query", "platform"],
+            },
+        },
+    },
 ]
 
 SYSTEM_PROMPT = """\
@@ -166,6 +190,8 @@ answers with source URLs. Use it for any factual question or investigation topic
 - **search_documents**: Find reports, PDFs, legal documents.
 - **read_page**: Get full content of a specific URL as markdown.
 - **get_video_transcript**: Get transcripts of YouTube videos found via search.
+- **search_social**: Search social media (twitter, facebook, instagram, reddit, telegram). \
+Use when eyewitness accounts, activist posts, or public discourse would add value.
 
 Research methodology (YOU MUST FOLLOW ALL STEPS):
 1. Start with web_research to get an overview and key sources
@@ -295,6 +321,62 @@ def _youtube_transcript(youtube_url: str) -> str:
     return json.dumps({"video_id": video_id, "transcript": full_text}, indent=2)
 
 
+SITE_FILTERS = {
+    "facebook": "site:facebook.com",
+    "instagram": "site:instagram.com",
+    "reddit": "site:reddit.com",
+    "telegram": "site:t.me",
+}
+
+
+def _search_social(query: str, platform: str) -> str:
+    """Search social media. Twitter uses Grok, others use SearXNG site: filter."""
+    if platform == "twitter":
+        return _grok_x_search(query)
+
+    site_filter = SITE_FILTERS.get(platform, "")
+    search_query = f"{query} {site_filter}".strip()
+    params = {"q": search_query, "format": "json"}
+    r = http.get(f"{SEARXNG_URL}/search", params=params)
+    r.raise_for_status()
+    data = r.json().get("results", [])[:8]
+    results = [
+        {
+            "url": item.get("url", ""),
+            "title": item.get("title", ""),
+            "snippet": (item.get("content", "") or "")[:300],
+            "platform": platform,
+        }
+        for item in data
+    ]
+    return json.dumps(results, indent=2)
+
+
+def _grok_x_search(query: str) -> str:
+    """Search X/Twitter using Grok via OpenRouter."""
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    )
+    response = client.chat.completions.create(
+        model="x-ai/grok-3-mini",
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "Search X/Twitter for relevant posts, threads, and discussions. "
+                    "Return the most relevant tweets with usernames, dates, and content. "
+                    "Include URLs to the original tweets when possible."
+                ),
+            },
+            {"role": "user", "content": f"Search X/Twitter for: {query}"},
+        ],
+        max_tokens=4096,
+    )
+    content = response.choices[0].message.content or ""
+    return json.dumps({"platform": "twitter", "results": content}, indent=2)
+
+
 def execute_tool(name: str, args: dict) -> str:
     try:
         if name == "web_research":
@@ -311,6 +393,8 @@ def execute_tool(name: str, args: dict) -> str:
             return _jina_read(args["url"])
         elif name == "get_video_transcript":
             return _youtube_transcript(args["youtube_url"])
+        elif name == "search_social":
+            return _search_social(args["query"], args["platform"])
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except httpx.HTTPStatusError as e:
@@ -319,7 +403,7 @@ def execute_tool(name: str, args: dict) -> str:
         return json.dumps({"error": str(e)})
 
 
-def _build_media_appendix(images, videos, news, docs) -> str:
+def _build_media_appendix(images, videos, news, docs, social=None) -> str:
     """Build a markdown appendix with all collected media, injected server-side."""
     sections = []
 
@@ -372,6 +456,19 @@ def _build_media_appendix(images, videos, news, docs) -> str:
                 lines.append(f"- [{title}]({url})")
         sections.append("\n".join(lines))
 
+    if social:
+        lines = ["---", "## Social Media"]
+        for item in social:
+            if isinstance(item, dict):
+                if item.get("platform") == "twitter" and item.get("results"):
+                    lines.append(f"### X/Twitter\n{item['results']}")
+                elif item.get("url"):
+                    platform = item.get("platform", "").title()
+                    title = item.get("title", "") or "Post"
+                    snippet = item.get("snippet", "")
+                    lines.append(f"- [{title}]({item['url']})" + (f" - *{snippet[:100]}*" if snippet else ""))
+        sections.append("\n".join(lines))
+
     return "\n\n".join(sections)
 
 
@@ -397,6 +494,7 @@ def run(query: str) -> Generator[dict, None, None]:
     collected_videos = []
     collected_news = []
     collected_docs = []
+    collected_social = []
 
     iteration = 0
     max_iterations = 15
@@ -441,7 +539,11 @@ def run(query: str) -> Generator[dict, None, None]:
                             collected_news.extend(parsed)
                         elif tc.function.name == "search_documents":
                             collected_docs.extend(parsed)
+                        elif tc.function.name == "search_social":
+                            collected_social.extend(parsed)
                     elif "error" in parsed:
+                        if tc.function.name == "search_social":
+                            collected_social.append(parsed)
                         yield event("tool_error", tool=tc.function.name, error=parsed["error"])
                     else:
                         title = parsed.get("title", "") or parsed.get("video_id", "")
@@ -467,7 +569,7 @@ def run(query: str) -> Generator[dict, None, None]:
             continue
 
         # Append collected media to report (don't rely on the model to format these)
-        appendix = _build_media_appendix(collected_images, collected_videos, collected_news, collected_docs)
+        appendix = _build_media_appendix(collected_images, collected_videos, collected_news, collected_docs, collected_social)
         if appendix:
             content = content.rstrip() + "\n\n" + appendix
 
