@@ -6,6 +6,7 @@
 <title>Research Agent</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.20.0/dist/tabler-icons.min.css">
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -422,7 +423,7 @@
 <body>
 
 <header>
-  <div class="logo" id="logo-icon"></div>
+  <div class="logo"><i class="ti ti-brain"></i></div>
   <h1>Research Agent</h1>
   <span class="tag" id="model-tag">ready</span>
 </header>
@@ -430,16 +431,16 @@
 <main>
   <div class="search-box">
     <textarea id="query" rows="2" placeholder="What do you want to research?"></textarea>
-    <button id="go" aria-label="Run research" class="go-btn"></button>
+    <button id="go" aria-label="Run research"><i class="ti ti-arrow-right"></i></button>
   </div>
 
   <div class="toggles">
     <label>Sources:</label>
-    <span class="chip active" data-tool="images">Images</span>
-    <span class="chip active" data-tool="videos">Videos</span>
-    <span class="chip active" data-tool="news">News</span>
-    <span class="chip active" data-tool="docs">Documents</span>
-    <span class="chip" data-tool="social">Social</span>
+    <span class="chip active" data-tool="images"><i class="ti ti-photo"></i> Images</span>
+    <span class="chip active" data-tool="videos"><i class="ti ti-player-play"></i> Videos</span>
+    <span class="chip active" data-tool="news"><i class="ti ti-news"></i> News</span>
+    <span class="chip active" data-tool="docs"><i class="ti ti-file-text"></i> Documents</span>
+    <span class="chip" data-tool="social"><i class="ti ti-brand-twitter"></i> Social</span>
     <div class="sep"></div>
     <select id="model-select">
       <option value="deepseek/deepseek-chat">DeepSeek V3</option>
@@ -450,7 +451,7 @@
 
   <div id="output">
     <div class="empty">
-      <div class="icon-big" id="empty-icon"></div>
+      <div class="icon-big"><i class="ti ti-world-search"></i></div>
       <p><strong>Multi-source AI research</strong></p>
       <p>Web, images, videos, news, documents, social media</p>
     </div>
@@ -485,14 +486,14 @@ const SVG = {
 };
 
 const TOOL_META = {
-  web_research:         { svg: SVG.search, cls: 'research' },
-  search_images:        { svg: SVG.photo,  cls: 'images' },
-  search_videos:        { svg: SVG.play,   cls: 'videos' },
-  search_news:          { svg: SVG.news,   cls: 'news' },
-  search_documents:     { svg: SVG.file,   cls: 'docs' },
-  read_page:            { svg: SVG.book,   cls: 'read' },
-  get_video_transcript: { svg: SVG.chat,   cls: 'transcript' },
-  search_social:        { svg: SVG.social, cls: 'social' },
+  web_research:         { ti: 'ti-search',          cls: 'research' },
+  search_images:        { ti: 'ti-photo',            cls: 'images' },
+  search_videos:        { ti: 'ti-player-play',      cls: 'videos' },
+  search_news:          { ti: 'ti-news',             cls: 'news' },
+  search_documents:     { ti: 'ti-file-text',        cls: 'docs' },
+  read_page:            { ti: 'ti-book',             cls: 'read' },
+  get_video_transcript: { ti: 'ti-message-language', cls: 'transcript' },
+  search_social:        { ti: 'ti-brand-twitter',    cls: 'social' },
 };
 
 function md(text) {
@@ -627,7 +628,7 @@ function go() {
     if (ev.type === 'followups') {
       const box = document.createElement('div');
       box.className = 'followups-box';
-      box.innerHTML = '<div class="title">' + SVG.help + ' Suggested focus areas</div><div class="chips">' +
+      box.innerHTML = '<div class="title"><i class="ti ti-help-circle"></i> Suggested focus areas</div><div class="chips">' +
         ev.questions.map(q => `<span class="q-chip">${escHtml(q)}</span>`).join('') + '</div>';
       feed.appendChild(box);
     }
@@ -635,7 +636,7 @@ function go() {
     if (ev.type === 'plan') {
       const box = document.createElement('div');
       box.className = 'plan-box';
-      box.innerHTML = '<div class="title">' + SVG.list + ' Research Plan</div>' + md(ev.content);
+      box.innerHTML = '<div class="title"><i class="ti ti-list-check"></i> Research Plan</div>' + md(ev.content);
       feed.appendChild(box);
     }
 
@@ -644,11 +645,12 @@ function go() {
     }
 
     if (ev.type === 'tool_call') {
-      const meta = TOOL_META[ev.tool] || { svg: SVG.help, cls: 'think' };
+      const meta = TOOL_META[ev.tool] || { svg: SVG.help, cls: 'think', ti: 'ti-help' };
       const name = ev.tool.replace(/_/g, ' ');
+      const icon = meta.ti ? `<i class="ti ${meta.ti}"></i>` : meta.svg;
       const el = document.createElement('div');
       el.className = 'step';
-      el.innerHTML = `<div class="icon ${meta.cls}">${meta.svg}</div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
+      el.innerHTML = `<div class="icon ${meta.cls}">${icon}</div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
       feed.appendChild(el);
       el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -678,7 +680,7 @@ function go() {
       // Download bar
       const bar = document.createElement('div');
       bar.className = 'download-bar';
-      bar.innerHTML = '<button class="download-btn" id="dl-md">' + SVG.download + ' Markdown</button>';
+      bar.innerHTML = '<button class="download-btn" id="dl-md"><i class="ti ti-download"></i> Markdown</button>';
       output.appendChild(bar);
       document.getElementById('dl-md').addEventListener('click', () => {
         const blob = new Blob([reportMarkdown], { type: 'text/markdown' });
@@ -728,11 +730,6 @@ function getConfig() {
     model: $('#model-select').value,
   };
 }
-
-// Set inline SVG icons for static elements
-$('#logo-icon').innerHTML = SVG.brain;
-$('.go-btn').innerHTML = SVG.arrow;
-$('#empty-icon').innerHTML = SVG.globe;
 
 btn.addEventListener('click', go);
 query.addEventListener('keydown', (e) => {
