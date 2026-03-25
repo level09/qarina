@@ -1,0 +1,427 @@
+"""
+Research agent for Bayanat team.
+Uses OpenRouter (DeepSeek default) as orchestrator with multiple research sources:
+- Perplexity Sonar (via OpenRouter) for AI-powered web research
+- SearXNG for image, video, news, and document search
+- Jina Reader for page scraping
+- youtube-transcript-api for YouTube transcripts
+Yields structured events for the UI via websocket.
+"""
+
+import json
+import os
+import re
+import sys
+from typing import Generator
+
+import httpx
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+MODEL = os.environ.get("MODEL", "deepseek/deepseek-chat")
+SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng.example.com:8888")
+JINA_PREFIX = "https://r.jina.ai/"
+
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_research",
+            "description": (
+                "Research a topic using AI-powered web search. Returns a detailed answer "
+                "with citations and source URLs. This is your PRIMARY research tool. "
+                "Use it for any factual question, background research, or investigation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The research question or topic to investigate"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_images",
+            "description": (
+                "Search for images related to a query. Returns URLs, titles, and thumbnails. "
+                "Use for finding photos, satellite imagery, visual evidence, or illustrations."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Image search query"},
+                    "limit": {"type": "integer", "description": "Max results (default 5)", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_videos",
+            "description": (
+                "Search for videos related to a query. Returns URLs, titles, durations, and thumbnails. "
+                "Use for finding video evidence, testimonies, documentaries, or news footage."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Video search query"},
+                    "limit": {"type": "integer", "description": "Max results (default 5)", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_news",
+            "description": (
+                "Search for recent news articles. Returns URLs, titles, dates, and sources. "
+                "Use for finding current coverage, breaking news, or recent developments."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "News search query"},
+                    "limit": {"type": "integer", "description": "Max results (default 5)", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_documents",
+            "description": (
+                "Search for PDF documents and reports. Returns URLs, titles, and sources. "
+                "Use for finding official reports, legal documents, academic papers."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Document search query"},
+                    "limit": {"type": "integer", "description": "Max results (default 5)", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_page",
+            "description": (
+                "Read the full content of a web page as clean markdown. "
+                "Use to get detailed content from a specific URL found via research or search."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The URL to read"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_video_transcript",
+            "description": (
+                "Get the transcript of a YouTube video. "
+                "Use to extract spoken content from YouTube videos found via search."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "youtube_url": {"type": "string", "description": "YouTube video URL or video ID"},
+                },
+                "required": ["youtube_url"],
+            },
+        },
+    },
+]
+
+SYSTEM_PROMPT = """\
+You are a research agent for human rights investigators. Your job is to find, \
+extract, and synthesize information from the web about human rights cases, \
+violations, news, reports, and related materials.
+
+You have access to these tools:
+
+- **web_research**: Your PRIMARY tool. It searches the web and returns AI-synthesized \
+answers with source URLs. Use it for any factual question or investigation topic.
+- **search_images**: Find relevant photos, satellite imagery, or visual evidence.
+- **search_videos**: Find video evidence, testimonies, documentaries.
+- **search_news**: Find recent news coverage and developments.
+- **search_documents**: Find reports, PDFs, legal documents.
+- **read_page**: Get full content of a specific URL as markdown.
+- **get_video_transcript**: Get transcripts of YouTube videos found via search.
+
+Research methodology (YOU MUST FOLLOW ALL STEPS):
+1. Start with web_research to get an overview and key sources
+2. ALWAYS call search_images to find relevant photos and visual evidence
+3. ALWAYS call search_videos to find video evidence and testimonies
+4. ALWAYS call search_news to find recent news coverage
+5. ALWAYS call search_documents to find PDF reports and official documents
+6. Use read_page to dive deeper into specific sources when needed
+7. Use get_video_transcript for important YouTube videos
+
+IMPORTANT: You MUST use at least web_research, search_images, search_videos, \
+search_news, and search_documents before writing your report. Never skip media searches.
+
+When you have enough information, write a structured research report with:
+- **Summary**: Key findings in 2-3 sentences
+- **Sources**: List of URLs with what each contributed
+- **Key Findings**: Detailed findings organized by theme
+- **Images**: For EACH image found, include it as a markdown image: ![description](URL)
+- **Videos**: For EACH video found, include it as a markdown link: [title](URL)
+- **Documents**: For EACH PDF/report found, include it as a markdown link: [title](URL)
+- **Gaps**: What information is still missing or unverified
+
+CRITICAL: In the Images section, you MUST use markdown image syntax ![alt](url) with the \
+actual image URLs from search_images results. Use the img_src or url field from the results. \
+In Videos and Documents sections, use markdown links [title](url) with actual URLs. \
+Do NOT just mention source names without URLs. Every media item must have a clickable link or embedded image."""
+
+
+http = httpx.Client(timeout=60.0)
+
+
+def _sonar_research(query: str) -> str:
+    """Use Perplexity Sonar via OpenRouter for AI-powered web research."""
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    )
+    response = client.chat.completions.create(
+        model="perplexity/sonar-pro",
+        messages=[
+            {"role": "system", "content": "You are a research assistant. Provide detailed, factual answers with source URLs."},
+            {"role": "user", "content": query},
+        ],
+        max_tokens=4096,
+    )
+    content = response.choices[0].message.content or ""
+    return json.dumps({"answer": content}, indent=2)
+
+
+def _searxng_search(query: str, category: str, limit: int = 5) -> str:
+    """Query SearXNG for a specific category."""
+    params = {"q": query, "categories": category, "format": "json"}
+    r = http.get(f"{SEARXNG_URL}/search", params=params)
+    r.raise_for_status()
+    data = r.json().get("results", [])[:limit]
+
+    if category == "images":
+        results = [
+            {
+                "url": item.get("img_src") or item.get("url", ""),
+                "title": item.get("title", ""),
+                "source": item.get("source", "") or item.get("engine", ""),
+                "thumbnail": item.get("thumbnail_src") or item.get("img_src") or item.get("url", ""),
+            }
+            for item in data
+        ]
+    elif category == "videos":
+        results = [
+            {
+                "url": item.get("url", ""),
+                "title": item.get("title", ""),
+                "duration": item.get("length") or item.get("duration", ""),
+                "thumbnail": item.get("thumbnail", "") or item.get("img_src", ""),
+            }
+            for item in data
+        ]
+    elif category == "news":
+        results = [
+            {
+                "url": item.get("url", ""),
+                "title": item.get("title", ""),
+                "date": item.get("publishedDate", "") or item.get("pubdate", ""),
+                "source": item.get("engine", "") or item.get("source", ""),
+            }
+            for item in data
+        ]
+    else:  # files
+        results = [
+            {
+                "url": item.get("url", ""),
+                "title": item.get("title", ""),
+                "source": item.get("engine", "") or item.get("source", ""),
+            }
+            for item in data
+        ]
+
+    return json.dumps(results, indent=2)
+
+
+def _jina_read(url: str) -> str:
+    """Read a page via Jina Reader."""
+    r = http.get(f"{JINA_PREFIX}{url}", headers={"Accept": "text/markdown"})
+    r.raise_for_status()
+    content = r.text[:12000]
+    return json.dumps({"url": url, "content": content}, indent=2)
+
+
+def _extract_video_id(url_or_id: str) -> str:
+    """Extract YouTube video ID from URL or return as-is if already an ID."""
+    patterns = [
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+        r'^([a-zA-Z0-9_-]{11})$',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url_or_id)
+        if match:
+            return match.group(1)
+    return url_or_id
+
+
+def _youtube_transcript(youtube_url: str) -> str:
+    """Get transcript from a YouTube video."""
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    video_id = _extract_video_id(youtube_url)
+    transcript = YouTubeTranscriptApi.get_transcript(video_id)
+    lines = [entry["text"] for entry in transcript]
+    full_text = " ".join(lines)
+    # Truncate if very long
+    if len(full_text) > 10000:
+        full_text = full_text[:10000] + "... [truncated]"
+    return json.dumps({"video_id": video_id, "transcript": full_text}, indent=2)
+
+
+def execute_tool(name: str, args: dict) -> str:
+    try:
+        if name == "web_research":
+            return _sonar_research(args["query"])
+        elif name == "search_images":
+            return _searxng_search(args["query"], "images", args.get("limit", 5))
+        elif name == "search_videos":
+            return _searxng_search(args["query"], "videos", args.get("limit", 5))
+        elif name == "search_news":
+            return _searxng_search(args["query"], "news", args.get("limit", 5))
+        elif name == "search_documents":
+            return _searxng_search(args.get("query", "") + " filetype:pdf", "files", args.get("limit", 5))
+        elif name == "read_page":
+            return _jina_read(args["url"])
+        elif name == "get_video_transcript":
+            return _youtube_transcript(args["youtube_url"])
+        else:
+            return json.dumps({"error": f"Unknown tool: {name}"})
+    except httpx.HTTPStatusError as e:
+        return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"})
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+def event(kind: str, **data) -> dict:
+    return {"type": kind, **data}
+
+
+def run(query: str) -> Generator[dict, None, None]:
+    """Run the agent loop, yielding events for each step."""
+    client = OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=os.environ["OPENROUTER_API_KEY"],
+    )
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": query},
+    ]
+
+    yield event("start", query=query, model=MODEL)
+
+    iteration = 0
+    max_iterations = 15
+
+    while iteration < max_iterations:
+        iteration += 1
+        yield event("thinking", iteration=iteration)
+
+        response = client.chat.completions.create(
+            model=MODEL,
+            max_tokens=4096,
+            tools=TOOLS,
+            messages=messages,
+        )
+
+        msg = response.choices[0].message
+
+        if msg.tool_calls:
+            messages.append(msg)
+            for tc in msg.tool_calls:
+                args = json.loads(tc.function.arguments)
+                label = args.get("query") or args.get("url") or args.get("youtube_url", "")
+                yield event("tool_call", tool=tc.function.name, args=args, label=label[:120])
+
+                result = execute_tool(tc.function.name, args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result,
+                })
+
+                try:
+                    parsed = json.loads(result)
+                    if isinstance(parsed, list):
+                        yield event("tool_result", tool=tc.function.name, count=len(parsed))
+                    elif "error" in parsed:
+                        yield event("tool_error", tool=tc.function.name, error=parsed["error"])
+                    else:
+                        title = parsed.get("title", "") or parsed.get("video_id", "")
+                        yield event("tool_result", tool=tc.function.name, title=title)
+                except Exception:
+                    yield event("tool_result", tool=tc.function.name)
+            continue
+
+        content = msg.content or ""
+
+        # DeepSeek outputs planning text ("I will now...", "Let me search...")
+        # between tool rounds instead of just calling tools. Detect and redirect.
+        is_planning = (
+            len(content) < 1000
+            and not any(h in content for h in ["## ", "### ", "**Summary**", "**Sources**", "**Key"])
+        )
+
+        if is_planning and iteration < max_iterations - 1:
+            messages.append(msg)
+            messages.append({
+                "role": "user",
+                "content": "Don't narrate. Use your tools now, then write the final report when done.",
+            })
+            continue
+
+        # Final report
+        yield event("report", content=content)
+        yield event("done")
+        return
+
+    yield event("error", message="Max iterations reached")
+    yield event("done")
+
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage: uv run agent.py 'your research query'")
+        print(f"Default model: {MODEL}")
+        sys.exit(1)
+    query = " ".join(sys.argv[1:])
+    for ev in run(query):
+        if ev["type"] == "tool_call":
+            print(f"  -> {ev['tool']}({ev['label']})")
+        elif ev["type"] == "report":
+            print(f"\n{'='*60}")
+            print(ev["content"])
+        elif ev["type"] == "start":
+            print(f"\nResearch: {ev['query']}")
+            print(f"Model: {ev['model']}\n")

@@ -1,0 +1,14 @@
+[project]
+name = "research-agent"
+version = "0.2.0"
+description = "AI research agent for human rights investigations"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "openai>=2.29.0",
+    "python-dotenv>=1.2.2",
+    "starlette>=0.46.0",
+    "uvicorn[standard]>=0.34.0",
+    "youtube-transcript-api>=1.0.0",
+]

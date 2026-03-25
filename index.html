@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bayanat Research Agent</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface2: #f0f0f4;
+    --border: #d4d4dc;
+    --text: #1a1a2e;
+    --text2: #6b6b80;
+    --accent: #6366f1;
+    --accent2: #4f46e5;
+    --green: #059669;
+    --amber: #d97706;
+    --red: #dc2626;
+    --blue: #2563eb;
+    --pink: #db2777;
+    --cyan: #0891b2;
+    --radius: 10px;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100dvh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  header .logo {
+    width: 32px; height: 32px;
+    background: var(--accent);
+    border-radius: 8px;
+    display: grid; place-items: center;
+    font-weight: 700; font-size: 16px; color: #fff;
+  }
+  header h1 { font-size: 18px; font-weight: 600; }
+  header .tag {
+    font-size: 11px; color: var(--text2);
+    background: var(--surface2); padding: 3px 8px;
+    border-radius: 20px; margin-left: auto;
+  }
+
+  main {
+    flex: 1;
+    max-width: 860px;
+    width: 100%;
+    margin: 0 auto;
+    padding: 32px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* Search bar */
+  .search-box {
+    position: relative;
+  }
+  .search-box textarea {
+    width: 100%;
+    min-height: 56px;
+    max-height: 200px;
+    padding: 16px 56px 16px 20px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 15px;
+    font-family: inherit;
+    line-height: 1.5;
+    resize: vertical;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .search-box textarea:focus {
+    border-color: var(--accent);
+  }
+  .search-box textarea::placeholder { color: var(--text2); }
+  .search-box button {
+    position: absolute;
+    right: 10px;
+    bottom: 10px;
+    width: 36px; height: 36px;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    cursor: pointer;
+    display: grid; place-items: center;
+    transition: opacity 0.15s;
+  }
+  .search-box button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .search-box button svg { width: 18px; height: 18px; }
+
+  /* Activity feed */
+  .feed { display: flex; flex-direction: column; gap: 8px; }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 10px 14px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    font-size: 13px;
+    color: var(--text2);
+    animation: fadeIn 0.2s ease;
+  }
+  .step .icon {
+    width: 22px; height: 22px; flex-shrink: 0;
+    border-radius: 6px;
+    display: grid; place-items: center;
+    font-size: 12px;
+  }
+  .step .icon.research { background: #6366f120; color: var(--accent2); }
+  .step .icon.images   { background: #db277720; color: var(--pink); }
+  .step .icon.videos   { background: #dc262620; color: var(--red); }
+  .step .icon.news     { background: #d9770620; color: var(--amber); }
+  .step .icon.docs     { background: #0891b220; color: var(--cyan); }
+  .step .icon.read     { background: #34d39920; color: var(--green); }
+  .step .icon.transcript { background: #2563eb20; color: var(--blue); }
+  .step .icon.think    { background: #8888a020; color: var(--text2); }
+  .step .icon.err      { background: #f8717120; color: var(--red); }
+  .step .label { flex: 1; line-height: 1.5; word-break: break-word; }
+  .step .label strong { color: var(--text); font-weight: 500; }
+
+  /* Spinner */
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spinner {
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    display: inline-block;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  /* Report */
+  .report {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    font-size: 14px;
+    line-height: 1.7;
+    animation: fadeIn 0.3s ease;
+  }
+  .report h1, .report h2, .report h3, .report h4 {
+    color: var(--text);
+    margin: 20px 0 8px;
+    line-height: 1.3;
+  }
+  .report h1:first-child, .report h2:first-child, .report h3:first-child { margin-top: 0; }
+  .report h1 { font-size: 20px; }
+  .report h2 { font-size: 17px; }
+  .report h3 { font-size: 15px; }
+  .report p { margin: 8px 0; color: var(--text); }
+  .report ul, .report ol { padding-left: 20px; margin: 8px 0; }
+  .report li { margin: 4px 0; color: var(--text); }
+  .report a { color: var(--accent2); text-decoration: none; }
+  .report a:hover { text-decoration: underline; }
+  .report strong { color: var(--text); font-weight: 600; }
+  .report hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+  .report code {
+    background: var(--surface2);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+  .report blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 14px;
+    margin: 12px 0;
+    color: var(--text2);
+  }
+  .report img {
+    max-width: 100%;
+    border-radius: 8px;
+    margin: 8px 0;
+  }
+
+  /* Empty state */
+  .empty {
+    text-align: center;
+    padding: 80px 20px;
+    color: var(--text2);
+    font-size: 14px;
+    line-height: 1.8;
+  }
+  .empty .big { font-size: 40px; margin-bottom: 12px; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">B</div>
+  <h1>Research Agent</h1>
+  <span class="tag" id="model-tag">deepseek-v3</span>
+</header>
+
+<main>
+  <div class="search-box">
+    <textarea id="query" rows="2" placeholder="What do you want to research? e.g. Recent reports on detention conditions in Syria..."></textarea>
+    <button id="go" aria-label="Run research">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+    </button>
+  </div>
+
+  <div id="output">
+    <div class="empty">
+      <div class="big">&#128270;</div>
+      Enter a research query above.<br>
+      The agent will search, analyze, and synthesize a report.
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const query = $('#query');
+const btn = $('#go');
+const output = $('#output');
+const modelTag = $('#model-tag');
+
+// SVG icons for each tool type
+const ICONS = {
+  web_research:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+  search_images:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>',
+  search_videos:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>',
+  search_news:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/></svg>',
+  search_documents:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>',
+  read_page:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>',
+  get_video_transcript:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>',
+};
+
+const ICON_CLASSES = {
+  web_research: 'research',
+  search_images: 'images',
+  search_videos: 'videos',
+  search_news: 'news',
+  search_documents: 'docs',
+  read_page: 'read',
+  get_video_transcript: 'transcript',
+};
+
+function iconFor(tool) {
+  const cls = ICON_CLASSES[tool] || 'think';
+  const svg = ICONS[tool] || '?';
+  return [cls, svg];
+}
+
+function addStep(iconClass, iconContent, html) {
+  const el = document.createElement('div');
+  el.className = 'step';
+  el.innerHTML = `<div class="icon ${iconClass}">${iconContent}</div><div class="label">${html}</div>`;
+  const feed = output.querySelector('.feed') || (() => {
+    const f = document.createElement('div');
+    f.className = 'feed';
+    output.appendChild(f);
+    return f;
+  })();
+  feed.appendChild(el);
+  el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  return el;
+}
+
+// Minimal markdown to HTML (covers what the agent produces)
+function md(text) {
+  let html = text
+    // code blocks
+    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+    // headings
+    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    // hr
+    .replace(/^---+$/gm, '<hr>')
+    // bold
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    // italic
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    // images
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" loading="lazy">')
+    // links
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    // inline code
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    // blockquote
+    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
+    // unordered list
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    // ordered list
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Wrap consecutive <li> in <ul>
+  html = html.replace(/((?:<li>.*<\/li>\n?)+)/g, '<ul>$1</ul>');
+  // Wrap remaining plain lines in <p>
+  html = html.split('\n').map(line => {
+    const trimmed = line.trim();
+    if (!trimmed) return '';
+    if (/^<[hupob]|^<li|^<hr|^<pre|^<img|^<ul|^<block/i.test(trimmed)) return line;
+    return `<p>${trimmed}</p>`;
+  }).join('\n');
+
+  // Convert bare image URLs in img-src attributes that are just URLs
+  // Also render standalone image URLs as img tags
+  html = html.replace(
+    /<p>(https?:\/\/[^\s<]+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?[^\s<]*)?)<\/p>/gi,
+    '<img src="$1" loading="lazy" style="max-width:100%;border-radius:8px;margin:8px 0">'
+  );
+
+  return html;
+}
+
+function go() {
+  const q = query.value.trim();
+  if (!q) return;
+  btn.disabled = true;
+  output.innerHTML = '';
+
+  // Single status line at top
+  const status = document.createElement('div');
+  status.className = 'step';
+  status.innerHTML = '<div class="icon think"><span class="spinner"></span></div><div class="label">Connecting...</div>';
+  output.appendChild(status);
+
+  const feed = document.createElement('div');
+  feed.className = 'feed';
+  output.appendChild(feed);
+
+  const setStatus = (text) => { status.querySelector('.label').textContent = text; };
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ query: q }));
+    setStatus('Researching...');
+  };
+
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+
+    if (ev.type === 'start') {
+      modelTag.textContent = ev.model.split('/').pop();
+    }
+
+    if (ev.type === 'thinking') {
+      setStatus(`Thinking... (round ${ev.iteration})`);
+    }
+
+    if (ev.type === 'tool_call') {
+      const [cls, svg] = iconFor(ev.tool);
+      const name = ev.tool.replace(/_/g, ' ');
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.innerHTML = `<div class="icon ${cls}">${svg}</div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
+      feed.appendChild(el);
+      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    if (ev.type === 'tool_error') {
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.innerHTML = `<div class="icon err">!</div><div class="label"><strong>Error</strong> ${escHtml(ev.error)}</div>`;
+      feed.appendChild(el);
+    }
+
+    if (ev.type === 'error') {
+      status.querySelector('.icon').innerHTML = '!';
+      status.querySelector('.icon').className = 'icon err';
+      setStatus(ev.message);
+      btn.disabled = false;
+    }
+
+    if (ev.type === 'report') {
+      status.remove();
+      const div = document.createElement('div');
+      div.className = 'report';
+      div.innerHTML = md(ev.content);
+      output.appendChild(div);
+      div.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    if (ev.type === 'done') {
+      status.remove();
+      btn.disabled = false;
+    }
+  };
+
+  ws.onerror = () => {
+    status.querySelector('.icon').innerHTML = '!';
+    status.querySelector('.icon').className = 'icon err';
+    setStatus('Could not connect to server');
+    btn.disabled = false;
+  };
+
+  ws.onclose = () => {
+    btn.disabled = false;
+  };
+}
+
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+btn.addEventListener('click', go);
+query.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    go();
+  }
+});
+</script>
+</body>
+</html>
