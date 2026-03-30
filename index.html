@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.20.0/dist/tabler-icons.min.css">
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1287,69 +1288,20 @@ function go() {
 }
 
 // --- Markdown renderer ---
+// Configure marked for research reports
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
+const renderer = new marked.Renderer();
+renderer.link = ({ href, text }) =>
+  `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+renderer.image = ({ href, text }) =>
+  `<img src="${href}" alt="${text || ''}" loading="lazy">`;
+marked.use({ renderer });
+
 function md(text) {
-  text = text.replace(/\r\n/g, '\n');
-  const codeBlocks = [];
-  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
-    codeBlocks.push(`<pre><code>${escHtml(code.trim())}</code></pre>`);
-    return `%%CODE_BLOCK_${codeBlocks.length - 1}%%`;
-  });
-
-  let html = text
-    .replace(/^#{4}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h4>$1</h4>')
-    .replace(/^#{3}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h3>$1</h3>')
-    .replace(/^#{2}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h2>$1</h2>')
-    .replace(/^#{1}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h1>$1</h1>')
-    .replace(/^---+$/gm, '<hr>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/__(.+?)__/g, '<strong>$1</strong>')
-    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
-    .replace(/!\[((?:[^\[\]]|\[[^\]]*\])*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" loading="lazy">')
-    .replace(/\[((?:[^\[\]]|\[[^\]]*\])+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-    .replace(/^[\-\*\+]\s+(.+)$/gm, '<li>$1</li>')
-    .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li>$1</li>');
-
-  html = html.replace(/((?:<li>[\s\S]*?<\/li>\s*)+)/g, '<ul>$1</ul>');
-  html = html.split('\n').map(line => {
-    const t = line.trim();
-    if (!t) return '';
-    if (/^<[hupob]|^<li|^<hr|^<pre|^<img|^<ul|^<block|^%%CODE/i.test(t)) return line;
-    return `<p>${t}</p>`;
-  }).join('\n');
-
-  codeBlocks.forEach((block, i) => {
-    html = html.replace(`<p>%%CODE_BLOCK_${i}%%</p>`, block);
-    html = html.replace(`%%CODE_BLOCK_${i}%%`, block);
-  });
-
-  html = html.replace(
-    /<p>(https?:\/\/[^\s<]+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?[^\s<]*)?)<\/p>/gi,
-    '<img src="$1" loading="lazy">'
-  );
-
-  html = html.replace(
-    /(?:<p>\|.*\|<\/p>\n?)+/g,
-    (tableBlock) => {
-      const rows = tableBlock.replace(/<\/?p>/g, '').trim().split('\n').filter(r => r.trim());
-      if (rows.length < 2) return tableBlock;
-      const dataRows = rows.filter(r => !/^\|[\s\-:|]+\|$/.test(r.trim()));
-      if (dataRows.length === 0) return tableBlock;
-      const parseRow = (r) => r.split('|').slice(1, -1).map(c => c.trim());
-      const headerCells = parseRow(dataRows[0]);
-      let t = '<table><thead><tr>' + headerCells.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
-      for (let i = 1; i < dataRows.length; i++) {
-        const cells = parseRow(dataRows[i]);
-        t += '<tr>' + cells.map(c => `<td>${c}</td>`).join('') + '</tr>';
-      }
-      t += '</tbody></table>';
-      return t;
-    }
-  );
-
-  html = html.replace(/<p>\s*<\/p>/g, '');
-  return html;
+  return marked.parse(text || '');
 }
 
 function escHtml(s) {
