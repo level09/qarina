@@ -279,22 +279,81 @@
   .media-strip::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
   .media-strip .media-card {
     flex-shrink: 0;
-    width: 160px;
+    width: 180px;
     background: var(--surface);
     border: 1.5px solid var(--border-light);
     border-radius: 10px;
     overflow: hidden;
     transition: border-color 0.15s;
-    cursor: pointer;
     text-decoration: none;
     color: var(--text);
+    position: relative;
   }
   .media-strip .media-card:hover { border-color: var(--accent); }
-  .media-card img {
-    width: 100%; height: 100px;
+  .media-card .media-thumb {
+    position: relative;
+    width: 100%; height: 110px;
+    overflow: hidden;
+    background: var(--surface2);
+    cursor: pointer;
+  }
+  .media-card .media-thumb img {
+    width: 100%; height: 100%;
     object-fit: cover;
     display: block;
-    background: var(--surface2);
+  }
+  /* Overlay actions on hover */
+  .media-card .media-actions {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+  .media-card:hover .media-actions { opacity: 1; }
+  .media-actions .act-btn {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 14px;
+    color: var(--text);
+    transition: all 0.1s;
+  }
+  .media-actions .act-btn:hover { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  /* Duration badge */
+  .media-card .badge {
+    position: absolute;
+    bottom: 4px; right: 4px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    background: rgba(0,0,0,0.75);
+    color: #fff;
+    border-radius: 4px;
+    pointer-events: none;
+  }
+  /* Source badge */
+  .media-card .source-badge {
+    position: absolute;
+    top: 4px; left: 4px;
+    padding: 2px 6px;
+    font-size: 9px;
+    font-weight: 600;
+    background: rgba(0,0,0,0.65);
+    color: #fff;
+    border-radius: 4px;
+    pointer-events: none;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .media-card .media-title {
     padding: 6px 8px;
@@ -306,18 +365,90 @@
     overflow: hidden;
     color: var(--text2);
   }
+  .media-card .media-date {
+    padding: 0 8px 6px;
+    font-size: 10px;
+    color: var(--text2);
+    opacity: 0.7;
+  }
   .media-strip.news-strip .media-card,
   .media-strip.docs-strip .media-card {
-    width: 220px;
+    width: 240px;
   }
-  .media-strip.news-strip .media-card img,
-  .media-strip.docs-strip .media-card img { display: none; }
+  .media-strip.news-strip .media-thumb,
+  .media-strip.docs-strip .media-thumb { display: none; }
+  .media-strip.news-strip .media-card .media-actions,
+  .media-strip.docs-strip .media-card .media-actions { display: none; }
   .media-strip.news-strip .media-title,
   .media-strip.docs-strip .media-title {
-    padding: 10px 12px;
+    padding: 10px 12px 4px;
     font-size: 12px;
+    font-weight: 500;
+    color: var(--text);
     -webkit-line-clamp: 3;
   }
+  .media-strip.news-strip .media-date,
+  .media-strip.docs-strip .media-date {
+    padding: 2px 12px 10px;
+  }
+  /* Copy toast */
+  .copy-toast {
+    position: fixed;
+    bottom: 24px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    padding: 8px 16px;
+    background: var(--border);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 8px;
+    opacity: 0;
+    transition: all 0.2s;
+    pointer-events: none;
+    z-index: 200;
+  }
+  .copy-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  /* Lightbox */
+  .lightbox {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.85);
+    z-index: 150;
+    display: none;
+    place-items: center;
+    cursor: zoom-out;
+  }
+  .lightbox.open { display: grid; }
+  .lightbox img {
+    max-width: 90vw;
+    max-height: 85vh;
+    border-radius: 8px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+  }
+  .lightbox .lb-actions {
+    position: fixed;
+    bottom: 20px;
+    display: flex;
+    gap: 8px;
+  }
+  .lightbox .lb-btn {
+    padding: 8px 14px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 8px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: var(--text);
+    transition: all 0.1s;
+  }
+  .lightbox .lb-btn:hover { background: var(--accent-bg); color: var(--accent); border-color: var(--accent); }
+  .lightbox .lb-btn i { font-size: 14px; }
+
   .media-section-label {
     font-family: var(--font-heading);
     font-size: 11px;
@@ -731,6 +862,16 @@
   <button class="header-btn" id="history-btn" title="Research history"><i class="ti ti-history"></i></button>
 </header>
 
+<div class="lightbox" id="lightbox">
+  <img id="lb-img" src="" alt="">
+  <div class="lb-actions">
+    <button class="lb-btn" id="lb-download"><i class="ti ti-download"></i> Download</button>
+    <button class="lb-btn" id="lb-copy"><i class="ti ti-link"></i> Copy URL</button>
+    <button class="lb-btn" id="lb-open"><i class="ti ti-external-link"></i> Open source</button>
+  </div>
+</div>
+<div class="copy-toast" id="copy-toast">Copied to clipboard</div>
+
 <div class="drawer-overlay" id="drawer-overlay">
   <div class="drawer" id="drawer">
     <div class="drawer-header">
@@ -986,7 +1127,7 @@ function go() {
       const icons = { images: 'ti-photo', videos: 'ti-player-play', news: 'ti-news', docs: 'ti-file-text', social: 'ti-brand-twitter' };
       const label = document.createElement('div');
       label.className = 'media-section-label';
-      label.innerHTML = `<i class="ti ${icons[ev.kind] || 'ti-file'}"></i> ${labels[ev.kind] || ev.kind}`;
+      label.innerHTML = `<i class="ti ${icons[ev.kind] || 'ti-file'}"></i> ${labels[ev.kind] || ev.kind} (${ev.items.length})`;
       feed.appendChild(label);
 
       const strip = document.createElement('div');
@@ -995,20 +1136,58 @@ function go() {
         const url = item.url || item.img_src || '';
         const title = item.title || '';
         const thumb = item.thumbnail || item.img_src || url;
+        const source = item.source || item.domain || '';
+        const date = item.date || '';
+        const duration = item.duration || '';
         if (!url) return;
-        const card = document.createElement('a');
+
+        const card = document.createElement('div');
         card.className = 'media-card';
-        card.href = url;
-        card.target = '_blank';
-        card.rel = 'noopener';
-        if (ev.kind === 'images' || ev.kind === 'videos') {
-          card.innerHTML = `<img src="${escHtml(thumb)}" alt="${escHtml(title)}" loading="lazy" onerror="this.style.display='none'"><div class="media-title">${escHtml(title)}</div>`;
+
+        if (ev.kind === 'images') {
+          card.innerHTML = `
+            <div class="media-thumb" data-url="${escHtml(url)}" data-source="${escHtml(url)}">
+              <img src="${escHtml(thumb)}" alt="${escHtml(title)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect fill=%22%23f5f3eb%22 width=%22100%22 height=%22100%22/><text x=%2250%22 y=%2255%22 text-anchor=%22middle%22 fill=%22%236b6b80%22 font-size=%2212%22>No preview</text></svg>'">
+              ${source ? `<span class="source-badge">${escHtml(source)}</span>` : ''}
+              <div class="media-actions">
+                <span class="act-btn" title="View full size" data-action="lightbox" data-img="${escHtml(url)}" data-source="${escHtml(url)}"><i class="ti ti-arrows-maximize"></i></span>
+                <span class="act-btn" title="Download" data-action="download" data-url="${escHtml(url)}" data-name="${escHtml(title || 'image')}"><i class="ti ti-download"></i></span>
+                <span class="act-btn" title="Copy URL" data-action="copy" data-url="${escHtml(url)}"><i class="ti ti-link"></i></span>
+              </div>
+            </div>
+            <div class="media-title">${escHtml(title)}</div>`;
+        } else if (ev.kind === 'videos') {
+          card.innerHTML = `
+            <div class="media-thumb" onclick="window.open('${escHtml(url)}','_blank')">
+              <img src="${escHtml(thumb)}" alt="${escHtml(title)}" loading="lazy" onerror="this.style.display='none'">
+              ${source ? `<span class="source-badge">${escHtml(source)}</span>` : ''}
+              ${duration ? `<span class="badge">${escHtml(duration)}</span>` : ''}
+              <div class="media-actions">
+                <span class="act-btn" title="Open video" onclick="event.stopPropagation();window.open('${escHtml(url)}','_blank')"><i class="ti ti-player-play"></i></span>
+                <span class="act-btn" title="Copy URL" data-action="copy" data-url="${escHtml(url)}"><i class="ti ti-link"></i></span>
+              </div>
+            </div>
+            <div class="media-title">${escHtml(title)}</div>
+            ${date ? `<div class="media-date">${escHtml(date)}</div>` : ''}`;
         } else {
-          const meta = item.date ? item.date.slice(0, 10) : (item.source || '');
-          card.innerHTML = `<div class="media-title"><strong>${escHtml(title)}</strong>${meta ? '<br><span style="color:var(--text2);font-size:10px">' + escHtml(meta) + '</span>' : ''}</div>`;
+          card.innerHTML = `
+            <div class="media-title" style="cursor:pointer" onclick="window.open('${escHtml(url)}','_blank')"><strong>${escHtml(title)}</strong></div>
+            ${source || date ? `<div class="media-date">${escHtml([source, date].filter(Boolean).join(' · '))}</div>` : ''}`;
         }
         strip.appendChild(card);
       });
+
+      // Wire up action buttons
+      strip.querySelectorAll('[data-action]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const action = btn.dataset.action;
+          if (action === 'lightbox') openLightbox(btn.dataset.img, btn.dataset.source);
+          if (action === 'download') downloadUrl(btn.dataset.url, btn.dataset.name);
+          if (action === 'copy') copyToClipboard(btn.dataset.url);
+        });
+      });
+
       feed.appendChild(strip);
       if (activeTabId === id) strip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
@@ -1176,6 +1355,43 @@ btn.addEventListener('click', go);
 queryEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); }
 });
+
+// --- Lightbox ---
+const lightbox = $('#lightbox');
+const lbImg = $('#lb-img');
+let lbSourceUrl = '';
+
+function openLightbox(imgUrl, sourceUrl) {
+  lbImg.src = imgUrl;
+  lbSourceUrl = sourceUrl || imgUrl;
+  lightbox.classList.add('open');
+}
+lightbox.addEventListener('click', (e) => {
+  if (e.target === lightbox) lightbox.classList.remove('open');
+});
+$('#lb-download').addEventListener('click', (e) => { e.stopPropagation(); downloadUrl(lbImg.src, 'research-image'); });
+$('#lb-copy').addEventListener('click', (e) => { e.stopPropagation(); copyToClipboard(lbImg.src); });
+$('#lb-open').addEventListener('click', (e) => { e.stopPropagation(); window.open(lbSourceUrl, '_blank'); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') lightbox.classList.remove('open'); });
+
+// --- Download ---
+function downloadUrl(url, name) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name || 'download';
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.click();
+}
+
+// --- Copy to clipboard ---
+function copyToClipboard(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    const toast = $('#copy-toast');
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1500);
+  });
+}
 
 // --- History drawer ---
 const drawerOverlay = $('#drawer-overlay');
