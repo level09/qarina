@@ -4,10 +4,11 @@ import threading
 from pathlib import Path
 
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
+import history
 from agent import run
 
 log = logging.getLogger("server")
@@ -67,9 +68,33 @@ async def ws_research(ws: WebSocket):
             pass
 
 
+async def api_history_list(request):
+    limit = int(request.query_params.get("limit", 50))
+    offset = int(request.query_params.get("offset", 0))
+    return JSONResponse(history.list_sessions(limit, offset))
+
+
+async def api_history_get(request):
+    session_id = int(request.path_params["id"])
+    session = history.get_session(session_id)
+    if not session:
+        return JSONResponse({"error": "Not found"}, status_code=404)
+    return JSONResponse(session)
+
+
+async def api_history_delete(request):
+    session_id = int(request.path_params["id"])
+    if history.delete_session(session_id):
+        return JSONResponse({"ok": True})
+    return JSONResponse({"error": "Not found"}, status_code=404)
+
+
 app = Starlette(
     routes=[
         Route("/", index),
+        Route("/api/history", api_history_list),
+        Route("/api/history/{id:int}", api_history_get),
+        Route("/api/history/{id:int}", api_history_delete, methods=["DELETE"]),
         WebSocketRoute("/ws", ws_research),
     ],
 )

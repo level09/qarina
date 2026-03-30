@@ -146,6 +146,90 @@
   }
   .search-box button:disabled { opacity: 0.4; cursor: not-allowed; }
 
+  /* Tab bar */
+  .tab-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    padding-bottom: 2px;
+  }
+  .tab-bar::-webkit-scrollbar { display: none; }
+  .tab-bar:empty { display: none; }
+
+  .tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text2);
+    background: var(--surface);
+    border: 1.5px solid var(--border-light);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    max-width: 220px;
+    flex-shrink: 0;
+  }
+  .tab:hover { border-color: var(--text2); }
+  .tab.active {
+    color: var(--text);
+    border-color: var(--accent);
+    background: var(--accent-bg);
+    font-weight: 600;
+  }
+  .tab .tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 150px;
+  }
+  .tab .tab-status {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .tab .tab-status.running {
+    background: var(--amber);
+    animation: pulse 1.2s ease infinite;
+  }
+  .tab .tab-status.done { background: var(--green); }
+  .tab .tab-status.error { background: var(--red); }
+  .tab .tab-close {
+    width: 16px; height: 16px;
+    display: grid; place-items: center;
+    border-radius: 4px;
+    font-size: 14px;
+    line-height: 1;
+    color: var(--text2);
+    flex-shrink: 0;
+    transition: all 0.1s;
+  }
+  .tab .tab-close:hover { background: var(--red-bg); color: var(--red); }
+  .tab-new {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border: 1.5px dashed var(--border-light);
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 16px;
+    flex-shrink: 0;
+    transition: all 0.15s;
+  }
+  .tab-new:hover { border-color: var(--accent); color: var(--accent); }
+
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+  /* Output panels */
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
   /* Activity feed */
   .feed { display: flex; flex-direction: column; gap: 6px; }
 
@@ -177,9 +261,18 @@
   .step .icon.transcript { background: var(--blue-bg); color: var(--blue); border-color: var(--blue); }
   .step .icon.social     { background: var(--violet-bg); color: var(--violet); border-color: var(--violet); }
   .step .icon.think      { background: var(--surface2); color: var(--text2); border-color: var(--border-light); }
+  .step .icon.knowledge  { background: var(--green-bg); color: var(--green); border-color: var(--green); }
   .step .icon.err        { background: var(--red-bg); color: var(--red); border-color: var(--red); }
   .step .label { flex: 1; line-height: 1.5; word-break: break-word; }
   .step .label strong { color: var(--text); font-weight: 600; }
+
+  /* Knowledge status */
+  .step.knowledge-empty { opacity: 0.6; }
+  .step .label .kb-hint {
+    font-size: 11px;
+    color: var(--text2);
+    font-weight: 400;
+  }
 
   /* Spinner */
   @keyframes spin { to { transform: rotate(360deg); } }
@@ -330,8 +423,8 @@
   .toggles select:focus { border-color: var(--accent); }
   .sep { width: 1px; height: 20px; background: var(--border-light); margin: 0 4px; }
 
-  /* Plan & followups */
-  .plan-box, .followups-box {
+  /* Plan & followups & knowledge */
+  .info-box {
     background: var(--surface);
     border: 1.5px solid var(--border-light);
     border-radius: 10px;
@@ -340,7 +433,7 @@
     line-height: 1.7;
     animation: fadeIn 0.2s ease;
   }
-  .plan-box .title, .followups-box .title {
+  .info-box .title {
     font-family: var(--font-heading);
     font-weight: 700;
     font-size: 12px;
@@ -352,12 +445,34 @@
     align-items: center;
     gap: 6px;
   }
-  .followups-box .chips {
+  .info-box.knowledge-found {
+    background: var(--green-bg);
+    border-color: var(--green);
+  }
+  .info-box.knowledge-found .title { color: var(--green); }
+  .info-box .body {
+    color: var(--text2);
+    white-space: pre-wrap;
+    max-height: 120px;
+    overflow: hidden;
+  }
+  .info-box .body.expanded { max-height: none; }
+  .info-box .toggle-expand {
+    font-size: 11px;
+    color: var(--accent);
+    cursor: pointer;
+    font-weight: 600;
+    margin-top: 4px;
+    display: inline-block;
+  }
+  .info-box.knowledge-found .toggle-expand { color: var(--green); }
+
+  .followups-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 6px;
   }
-  .followups-box .q-chip {
+  .q-chip {
     font-size: 12px;
     padding: 5px 12px;
     background: var(--accent-bg);
@@ -411,12 +526,134 @@
   }
   .empty p { margin: 4px 0; }
 
+  /* History drawer */
+  .drawer-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.3);
+    z-index: 100;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .drawer-overlay.open { opacity: 1; pointer-events: auto; }
+
+  .drawer {
+    position: fixed;
+    top: 0; right: 0;
+    width: 380px; max-width: 90vw;
+    height: 100dvh;
+    background: var(--surface);
+    border-left: 2px solid var(--border);
+    z-index: 101;
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.25s ease;
+  }
+  .drawer-overlay.open .drawer { transform: translateX(0); }
+
+  .drawer-header {
+    padding: 16px 20px;
+    border-bottom: 2px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  .drawer-header h2 {
+    font-family: var(--font-heading);
+    font-size: 16px;
+    font-weight: 700;
+    flex: 1;
+  }
+  .drawer-close {
+    width: 30px; height: 30px;
+    display: grid; place-items: center;
+    background: none;
+    border: 1.5px solid var(--border-light);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 18px;
+    color: var(--text2);
+    transition: all 0.1s;
+  }
+  .drawer-close:hover { border-color: var(--red); color: var(--red); }
+
+  .drawer-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .drawer-empty {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text2);
+    font-size: 13px;
+  }
+  .history-item {
+    padding: 12px 14px;
+    background: var(--surface2);
+    border: 1.5px solid var(--border-light);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .history-item:hover { border-color: var(--accent); }
+  .history-item .h-query {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .history-item .h-meta {
+    font-size: 11px;
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .history-item .h-delete {
+    margin-left: auto;
+    padding: 2px 6px;
+    font-size: 11px;
+    color: var(--text2);
+    border: none;
+    background: none;
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .history-item .h-delete:hover { background: var(--red-bg); color: var(--red); }
+
+  .header-btn {
+    width: 34px; height: 34px;
+    display: grid; place-items: center;
+    background: var(--surface);
+    border: 1.5px solid var(--border-light);
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--text2);
+    font-size: 18px;
+    transition: all 0.15s;
+  }
+  .header-btn:hover { border-color: var(--accent); color: var(--accent); }
+
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 
   @media (max-width: 640px) {
     main { padding: 16px; }
     .report { padding: 20px; }
     .search-box textarea { font-size: 14px; }
+    .tab .tab-label { max-width: 100px; }
   }
 </style>
 </head>
@@ -426,7 +663,21 @@
   <div class="logo"><i class="ti ti-brain"></i></div>
   <h1>Research Agent</h1>
   <span class="tag" id="model-tag">ready</span>
+  <button class="header-btn" id="history-btn" title="Research history"><i class="ti ti-history"></i></button>
 </header>
+
+<div class="drawer-overlay" id="drawer-overlay">
+  <div class="drawer" id="drawer">
+    <div class="drawer-header">
+      <i class="ti ti-history" style="font-size:18px;color:var(--accent)"></i>
+      <h2>Research History</h2>
+      <button class="drawer-close" id="drawer-close">&times;</button>
+    </div>
+    <div class="drawer-list" id="history-list">
+      <div class="drawer-empty">No research sessions yet</div>
+    </div>
+  </div>
+</div>
 
 <main>
   <div class="search-box">
@@ -443,47 +694,32 @@
     <span class="chip" data-tool="social"><i class="ti ti-brand-twitter"></i> Social</span>
     <div class="sep"></div>
     <select id="model-select">
-      <option value="deepseek/deepseek-chat">DeepSeek V3</option>
       <option value="google/gemini-2.5-flash">Gemini Flash</option>
+      <option value="deepseek/deepseek-chat">DeepSeek V3</option>
       <option value="anthropic/claude-haiku-4.5">Claude Haiku</option>
     </select>
   </div>
 
-  <div id="output">
-    <div class="empty">
-      <div class="icon-big"><i class="ti ti-world-search"></i></div>
-      <p><strong>Multi-source AI research</strong></p>
-      <p>Web, images, videos, news, documents, social media</p>
+  <div class="tab-bar" id="tab-bar"></div>
+
+  <div id="panels">
+    <div class="tab-panel active" id="panel-empty">
+      <div class="empty">
+        <div class="icon-big"><i class="ti ti-world-search"></i></div>
+        <p><strong>Multi-source AI research</strong></p>
+        <p>Web, images, videos, news, documents, social media</p>
+      </div>
     </div>
   </div>
 </main>
 
 <script>
 const $ = s => document.querySelector(s);
-const query = $('#query');
+const queryEl = $('#query');
 const btn = $('#go');
-const output = $('#output');
+const tabBar = $('#tab-bar');
+const panels = $('#panels');
 const modelTag = $('#model-tag');
-
-// Inline SVG icons (no CDN dependency)
-const S = (d) => `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`;
-const SVG = {
-  search:   S('<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>'),
-  photo:    S('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/>'),
-  play:     S('<polygon points="5 3 19 12 5 21 5 3"/>'),
-  news:     S('<path d="M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 1-2 2Zm0 0a2 2 0 0 1-2-2v-9c0-1.1.9-2 2-2h2"/><path d="M18 14h-8"/><path d="M15 18h-5"/><path d="M10 6h8v4h-8V6Z"/>'),
-  file:     S('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
-  book:     S('<path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/>'),
-  chat:     S('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
-  social:   S('<path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>'),
-  brain:    S('<circle cx="12" cy="12" r="10"/><path d="M12 2a7 7 0 0 0-4 12.9V22h8v-7.1A7 7 0 0 0 12 2z"/>'),
-  arrow:    S('<line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/>'),
-  globe:    S('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
-  warn:     S('<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
-  help:     S('<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>'),
-  list:     S('<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>'),
-  download: S('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>'),
-};
 
 const TOOL_META = {
   web_research:         { ti: 'ti-search',          cls: 'research' },
@@ -496,11 +732,267 @@ const TOOL_META = {
   search_social:        { ti: 'ti-brand-twitter',    cls: 'social' },
 };
 
-function md(text) {
-  // Normalize line endings
-  text = text.replace(/\r\n/g, '\n');
+// --- Tab state ---
+let tabs = [];
+let activeTabId = null;
+let nextTabId = 1;
 
-  // Extract code blocks first to protect them
+function createTab(query) {
+  const id = nextTabId++;
+  const tab = {
+    id,
+    query,
+    status: 'running',
+    reportMd: '',
+    ws: null,
+  };
+  tabs.push(tab);
+
+  // Create panel
+  const panel = document.createElement('div');
+  panel.className = 'tab-panel';
+  panel.id = `panel-${id}`;
+
+  const status = document.createElement('div');
+  status.className = 'step';
+  status.id = `status-${id}`;
+  status.innerHTML = '<div class="icon think"><span class="spinner"></span></div><div class="label">Connecting...</div>';
+  panel.appendChild(status);
+
+  const feed = document.createElement('div');
+  feed.className = 'feed';
+  feed.id = `feed-${id}`;
+  panel.appendChild(feed);
+
+  panels.appendChild(panel);
+
+  renderTabs();
+  switchTab(id);
+  return tab;
+}
+
+function renderTabs() {
+  tabBar.innerHTML = '';
+  tabs.forEach(t => {
+    const el = document.createElement('div');
+    el.className = 'tab' + (t.id === activeTabId ? ' active' : '');
+    el.innerHTML = `
+      <span class="tab-status ${t.status}"></span>
+      <span class="tab-label">${escHtml(t.query)}</span>
+      <span class="tab-close" data-id="${t.id}">&times;</span>
+    `;
+    el.addEventListener('click', (e) => {
+      if (e.target.classList.contains('tab-close')) {
+        closeTab(Number(e.target.dataset.id));
+      } else {
+        switchTab(t.id);
+      }
+    });
+    tabBar.appendChild(el);
+  });
+}
+
+function switchTab(id) {
+  activeTabId = id;
+  panels.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  const target = $(`#panel-${id}`);
+  if (target) target.classList.add('active');
+  // Hide empty state when tabs exist
+  const empty = $('#panel-empty');
+  if (empty) empty.classList.remove('active');
+  renderTabs();
+}
+
+function closeTab(id) {
+  const idx = tabs.findIndex(t => t.id === id);
+  if (idx === -1) return;
+  const tab = tabs[idx];
+  if (tab.ws && tab.ws.readyState <= 1) tab.ws.close();
+  const panel = $(`#panel-${id}`);
+  if (panel) panel.remove();
+  tabs.splice(idx, 1);
+
+  if (tabs.length === 0) {
+    activeTabId = null;
+    const empty = $('#panel-empty');
+    if (empty) empty.classList.add('active');
+  } else if (activeTabId === id) {
+    switchTab(tabs[Math.min(idx, tabs.length - 1)].id);
+  }
+  renderTabs();
+}
+
+function updateTabStatus(id, status) {
+  const tab = tabs.find(t => t.id === id);
+  if (tab) tab.status = status;
+  renderTabs();
+}
+
+// --- Research session ---
+function go() {
+  const q = queryEl.value.trim();
+  if (!q) return;
+
+  const tab = createTab(q);
+  const id = tab.id;
+
+  const setStatus = (text) => {
+    const el = $(`#status-${id}`);
+    if (el) el.querySelector('.label').textContent = text;
+  };
+  const getFeed = () => $(`#feed-${id}`);
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const ws = new WebSocket(`${proto}://${location.host}/ws`);
+  tab.ws = ws;
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ query: q, config: getConfig() }));
+    setStatus('Starting...');
+  };
+
+  ws.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    const feed = getFeed();
+    if (!feed) return;
+
+    if (ev.type === 'start') {
+      modelTag.textContent = ev.model.split('/').pop();
+    }
+
+    if (ev.type === 'phase') {
+      setStatus(ev.name);
+    }
+
+    if (ev.type === 'followups') {
+      const box = document.createElement('div');
+      box.className = 'info-box';
+      box.innerHTML = '<div class="title"><i class="ti ti-help-circle"></i> Suggested focus areas</div><div class="followups-chips">' +
+        ev.questions.map(q => `<span class="q-chip">${escHtml(q)}</span>`).join('') + '</div>';
+      feed.appendChild(box);
+    }
+
+    if (ev.type === 'prior_knowledge') {
+      const el = document.createElement('div');
+      if (ev.found) {
+        el.className = 'info-box knowledge-found';
+        const bodyId = 'kb-' + id;
+        el.innerHTML = '<div class="title"><i class="ti ti-database"></i> Prior research found</div>' +
+          `<div class="body" id="${bodyId}">${escHtml(ev.summary)}</div>` +
+          `<span class="toggle-expand" onclick="const b=document.getElementById('${bodyId}');b.classList.toggle('expanded');this.textContent=b.classList.contains('expanded')?'Show less':'Show more'">Show more</span>`;
+      } else {
+        el.className = 'step knowledge-empty';
+        el.innerHTML = '<div class="icon knowledge"><i class="ti ti-database"></i></div>' +
+          '<div class="label">Knowledge graph <span class="kb-hint">- no prior research. Findings will be saved for future sessions.</span></div>';
+      }
+      feed.appendChild(el);
+    }
+
+    if (ev.type === 'indexed') {
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.innerHTML = '<div class="icon knowledge"><i class="ti ti-database-plus"></i></div><div class="label">Report saved to knowledge graph</div>';
+      feed.appendChild(el);
+    }
+
+    if (ev.type === 'plan') {
+      const box = document.createElement('div');
+      box.className = 'info-box';
+      box.innerHTML = '<div class="title"><i class="ti ti-list-check"></i> Research Plan</div>' + md(ev.content);
+      feed.appendChild(box);
+    }
+
+    if (ev.type === 'thinking') {
+      setStatus(`Thinking... (round ${ev.iteration})`);
+    }
+
+    if (ev.type === 'tool_call') {
+      const meta = TOOL_META[ev.tool] || { ti: 'ti-help', cls: 'think' };
+      const name = ev.tool.replace(/_/g, ' ');
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.innerHTML = `<div class="icon ${meta.cls}"><i class="ti ${meta.ti}"></i></div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
+      feed.appendChild(el);
+      if (activeTabId === id) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    if (ev.type === 'tool_error') {
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.innerHTML = '<div class="icon err"><i class="ti ti-alert-triangle"></i></div><div class="label"><strong>Error</strong> ' + escHtml(ev.error) + '</div>';
+      feed.appendChild(el);
+    }
+
+    if (ev.type === 'error') {
+      const statusEl = $(`#status-${id}`);
+      if (statusEl) {
+        statusEl.querySelector('.icon').innerHTML = '<i class="ti ti-alert-triangle"></i>';
+        statusEl.querySelector('.icon').className = 'icon err';
+        setStatus(ev.message);
+      }
+      updateTabStatus(id, 'error');
+    }
+
+    if (ev.type === 'report') {
+      const statusEl = $(`#status-${id}`);
+      if (statusEl) statusEl.remove();
+      tab.reportMd = ev.content;
+      const panel = $(`#panel-${id}`);
+      if (!panel) return;
+
+      const div = document.createElement('div');
+      div.className = 'report';
+      div.innerHTML = md(ev.content);
+      panel.appendChild(div);
+
+      const bar = document.createElement('div');
+      bar.className = 'download-bar';
+      const dlBtn = document.createElement('button');
+      dlBtn.className = 'download-btn';
+      dlBtn.innerHTML = '<i class="ti ti-download"></i> Markdown';
+      dlBtn.addEventListener('click', () => {
+        const blob = new Blob([tab.reportMd], { type: 'text/markdown' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'research-report.md';
+        a.click();
+      });
+      bar.appendChild(dlBtn);
+      panel.appendChild(bar);
+
+      if (activeTabId === id) div.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    if (ev.type === 'done') {
+      const statusEl = $(`#status-${id}`);
+      if (statusEl) statusEl.remove();
+      updateTabStatus(id, 'done');
+    }
+  };
+
+  ws.onerror = () => {
+    const statusEl = $(`#status-${id}`);
+    if (statusEl) {
+      statusEl.querySelector('.icon').innerHTML = '<i class="ti ti-alert-triangle"></i>';
+      statusEl.querySelector('.icon').className = 'icon err';
+      statusEl.querySelector('.label').textContent = 'Could not connect to server';
+    }
+    updateTabStatus(id, 'error');
+  };
+
+  ws.onclose = () => {
+    if (tabs.find(t => t.id === id)?.status === 'running') {
+      updateTabStatus(id, 'done');
+    }
+  };
+
+  queryEl.value = '';
+  queryEl.focus();
+}
+
+// --- Markdown renderer ---
+function md(text) {
+  text = text.replace(/\r\n/g, '\n');
   const codeBlocks = [];
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
     codeBlocks.push(`<pre><code>${escHtml(code.trim())}</code></pre>`);
@@ -508,35 +1000,22 @@ function md(text) {
   });
 
   let html = text
-    // headings (with optional ** wrapping)
     .replace(/^#{4}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h4>$1</h4>')
     .replace(/^#{3}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h3>$1</h3>')
     .replace(/^#{2}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h2>$1</h2>')
     .replace(/^#{1}\s+\*{0,2}(.+?)\*{0,2}\s*$/gm, '<h1>$1</h1>')
-    // hr
     .replace(/^---+$/gm, '<hr>')
-    // bold (handle ** and __)
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/__(.+?)__/g, '<strong>$1</strong>')
-    // italic
     .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, '<em>$1</em>')
-    // images
     .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '<img alt="$1" src="$2" loading="lazy">')
-    // links
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-    // inline code
     .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // blockquote
     .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-    // unordered list (handle -, *, +)
     .replace(/^[\-\*\+]\s+(.+)$/gm, '<li>$1</li>')
-    // ordered list
     .replace(/^\d+[\.\)]\s+(.+)$/gm, '<li>$1</li>');
 
-  // Wrap consecutive <li> in <ul>
   html = html.replace(/((?:<li>[\s\S]*?<\/li>\s*)+)/g, '<ul>$1</ul>');
-
-  // Wrap remaining plain lines in <p>, skip empty and already-wrapped
   html = html.split('\n').map(line => {
     const t = line.trim();
     if (!t) return '';
@@ -544,29 +1023,21 @@ function md(text) {
     return `<p>${t}</p>`;
   }).join('\n');
 
-  // Restore code blocks
   codeBlocks.forEach((block, i) => {
     html = html.replace(`<p>%%CODE_BLOCK_${i}%%</p>`, block);
     html = html.replace(`%%CODE_BLOCK_${i}%%`, block);
   });
 
-  // Bare image URLs as img tags
   html = html.replace(
     /<p>(https?:\/\/[^\s<]+\.(?:jpg|jpeg|png|gif|webp|svg)(?:\?[^\s<]*)?)<\/p>/gi,
     '<img src="$1" loading="lazy">'
   );
 
-  // Convert markdown tables
   html = html.replace(
     /(?:<p>\|.*\|<\/p>\n?)+/g,
     (tableBlock) => {
-      const rows = tableBlock
-        .replace(/<\/?p>/g, '')
-        .trim()
-        .split('\n')
-        .filter(r => r.trim());
+      const rows = tableBlock.replace(/<\/?p>/g, '').trim().split('\n').filter(r => r.trim());
       if (rows.length < 2) return tableBlock;
-      // Skip separator row (|---|---|)
       const dataRows = rows.filter(r => !/^\|[\s\-:|]+\|$/.test(r.trim()));
       if (dataRows.length === 0) return tableBlock;
       const parseRow = (r) => r.split('|').slice(1, -1).map(c => c.trim());
@@ -581,132 +1052,8 @@ function md(text) {
     }
   );
 
-  // Clean up empty paragraphs
   html = html.replace(/<p>\s*<\/p>/g, '');
-
   return html;
-}
-
-function go() {
-  const q = query.value.trim();
-  if (!q) return;
-  btn.disabled = true;
-  output.innerHTML = '';
-
-  const status = document.createElement('div');
-  status.className = 'step';
-  status.innerHTML = '<div class="icon think"><span class="spinner"></span></div><div class="label">Connecting...</div>';
-  output.appendChild(status);
-
-  const feed = document.createElement('div');
-  feed.className = 'feed';
-  output.appendChild(feed);
-
-  const setStatus = (text) => { status.querySelector('.label').textContent = text; };
-
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/ws`);
-
-  let reportMarkdown = '';
-
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ query: q, config: getConfig() }));
-    setStatus('Starting...');
-  };
-
-  ws.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
-
-    if (ev.type === 'start') {
-      modelTag.textContent = ev.model.split('/').pop();
-    }
-
-    if (ev.type === 'phase') {
-      setStatus(ev.name);
-    }
-
-    if (ev.type === 'followups') {
-      const box = document.createElement('div');
-      box.className = 'followups-box';
-      box.innerHTML = '<div class="title"><i class="ti ti-help-circle"></i> Suggested focus areas</div><div class="chips">' +
-        ev.questions.map(q => `<span class="q-chip">${escHtml(q)}</span>`).join('') + '</div>';
-      feed.appendChild(box);
-    }
-
-    if (ev.type === 'plan') {
-      const box = document.createElement('div');
-      box.className = 'plan-box';
-      box.innerHTML = '<div class="title"><i class="ti ti-list-check"></i> Research Plan</div>' + md(ev.content);
-      feed.appendChild(box);
-    }
-
-    if (ev.type === 'thinking') {
-      setStatus(`Thinking... (round ${ev.iteration})`);
-    }
-
-    if (ev.type === 'tool_call') {
-      const meta = TOOL_META[ev.tool] || { svg: SVG.help, cls: 'think', ti: 'ti-help' };
-      const name = ev.tool.replace(/_/g, ' ');
-      const icon = meta.ti ? `<i class="ti ${meta.ti}"></i>` : meta.svg;
-      const el = document.createElement('div');
-      el.className = 'step';
-      el.innerHTML = `<div class="icon ${meta.cls}">${icon}</div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
-      feed.appendChild(el);
-      el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-    }
-
-    if (ev.type === 'tool_error') {
-      const el = document.createElement('div');
-      el.className = 'step';
-      el.innerHTML = '<div class="icon err">!</div><div class="label"><strong>Error</strong> ' + escHtml(ev.error) + '</div>';
-      feed.appendChild(el);
-    }
-
-    if (ev.type === 'error') {
-      status.querySelector('.icon').innerHTML = '!';
-      status.querySelector('.icon').className = 'icon err';
-      setStatus(ev.message);
-      btn.disabled = false;
-    }
-
-    if (ev.type === 'report') {
-      status.remove();
-      reportMarkdown = ev.content;
-      const div = document.createElement('div');
-      div.className = 'report';
-      div.innerHTML = md(ev.content);
-      output.appendChild(div);
-
-      // Download bar
-      const bar = document.createElement('div');
-      bar.className = 'download-bar';
-      bar.innerHTML = '<button class="download-btn" id="dl-md"><i class="ti ti-download"></i> Markdown</button>';
-      output.appendChild(bar);
-      document.getElementById('dl-md').addEventListener('click', () => {
-        const blob = new Blob([reportMarkdown], { type: 'text/markdown' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = 'research-report.md';
-        a.click();
-      });
-
-      div.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-
-    if (ev.type === 'done') {
-      status.remove();
-      btn.disabled = false;
-    }
-  };
-
-  ws.onerror = () => {
-    status.querySelector('.icon').innerHTML = '!';
-    status.querySelector('.icon').className = 'icon err';
-    setStatus('Could not connect to server');
-    btn.disabled = false;
-  };
-
-  ws.onclose = () => { btn.disabled = false; };
 }
 
 function escHtml(s) {
@@ -715,26 +1062,120 @@ function escHtml(s) {
   return d.innerHTML;
 }
 
-// Toggle chips
-document.querySelectorAll('.chip').forEach(chip => {
-  chip.addEventListener('click', () => chip.classList.toggle('active'));
-});
-
 function getConfig() {
   const sources = {};
   document.querySelectorAll('.chip').forEach(c => {
     sources[c.dataset.tool] = c.classList.contains('active');
   });
-  return {
-    sources,
-    model: $('#model-select').value,
-  };
+  return { sources, model: $('#model-select').value };
 }
 
+// Toggle chips
+document.querySelectorAll('.chip').forEach(chip => {
+  chip.addEventListener('click', () => chip.classList.toggle('active'));
+});
+
 btn.addEventListener('click', go);
-query.addEventListener('keydown', (e) => {
+queryEl.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); go(); }
 });
+
+// --- History drawer ---
+const drawerOverlay = $('#drawer-overlay');
+const historyList = $('#history-list');
+
+$('#history-btn').addEventListener('click', () => {
+  drawerOverlay.classList.add('open');
+  loadHistory();
+});
+$('#drawer-close').addEventListener('click', () => drawerOverlay.classList.remove('open'));
+drawerOverlay.addEventListener('click', (e) => {
+  if (e.target === drawerOverlay) drawerOverlay.classList.remove('open');
+});
+
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/history');
+    const sessions = await res.json();
+    if (!sessions.length) {
+      historyList.innerHTML = '<div class="drawer-empty">No research sessions yet</div>';
+      return;
+    }
+    historyList.innerHTML = sessions.map(s => {
+      const date = new Date(s.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      const model = (s.model || '').split('/').pop() || '';
+      return `<div class="history-item" data-id="${s.id}">
+        <div class="h-query">${escHtml(s.query)}</div>
+        <div class="h-meta">
+          <span>${date}</span>
+          ${model ? `<span>${escHtml(model)}</span>` : ''}
+          <button class="h-delete" data-id="${s.id}" title="Delete">&times;</button>
+        </div>
+      </div>`;
+    }).join('');
+
+    historyList.querySelectorAll('.history-item').forEach(item => {
+      item.addEventListener('click', (e) => {
+        if (e.target.classList.contains('h-delete')) return;
+        openHistorySession(Number(item.dataset.id));
+      });
+    });
+    historyList.querySelectorAll('.h-delete').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const id = Number(btn.dataset.id);
+        await fetch(`/api/history/${id}`, { method: 'DELETE' });
+        loadHistory();
+      });
+    });
+  } catch (err) {
+    historyList.innerHTML = '<div class="drawer-empty">Could not load history</div>';
+  }
+}
+
+async function openHistorySession(id) {
+  try {
+    const res = await fetch(`/api/history/${id}`);
+    const session = await res.json();
+    if (!session.report) return;
+
+    drawerOverlay.classList.remove('open');
+
+    const tab = createTab(session.query);
+    tab.reportMd = session.report;
+    tab.status = 'done';
+
+    const statusEl = $(`#status-${tab.id}`);
+    if (statusEl) statusEl.remove();
+
+    const panel = $(`#panel-${tab.id}`);
+    if (!panel) return;
+
+    const div = document.createElement('div');
+    div.className = 'report';
+    div.innerHTML = md(session.report);
+    panel.appendChild(div);
+
+    const bar = document.createElement('div');
+    bar.className = 'download-bar';
+    const dlBtn = document.createElement('button');
+    dlBtn.className = 'download-btn';
+    dlBtn.innerHTML = '<i class="ti ti-download"></i> Markdown';
+    dlBtn.addEventListener('click', () => {
+      const blob = new Blob([tab.reportMd], { type: 'text/markdown' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'research-report.md';
+      a.click();
+    });
+    bar.appendChild(dlBtn);
+    panel.appendChild(bar);
+
+    updateTabStatus(tab.id, 'done');
+  } catch (err) {
+    console.error('Failed to load session', err);
+  }
+}
 </script>
 </body>
 </html>

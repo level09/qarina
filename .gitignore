@@ -11,3 +11,9 @@ wheels/
 
 # Secrets
 .env
+
+# Knowledge store (LightRAG data)
+knowledge_store/
+
+# Research history
+history.db

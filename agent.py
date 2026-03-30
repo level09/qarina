@@ -12,15 +12,20 @@ import json
 import os
 import re
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from typing import Generator
 
 import httpx
 from openai import OpenAI
 from dotenv import load_dotenv
 
+import history
+import knowledge
+
 load_dotenv()
 
-MODEL = os.environ.get("MODEL", "deepseek/deepseek-chat")
+MODEL = os.environ.get("MODEL", "google/gemini-2.5-flash")
 SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng.example.com:8888")
 JINA_PREFIX = "https://r.jina.ai/"
 
@@ -513,14 +518,23 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
                 "search_documents": "docs",
                 "search_social": "social",
             }
+
+            # Log all tool calls first
             for tc in msg.tool_calls:
                 args = json.loads(tc.function.arguments)
                 label = args.get("query") or args.get("url") or args.get("youtube_url", "")
                 events.append(event("tool_call", tool=tc.function.name, args=args, label=label[:120]))
 
-                result = execute_tool(tc.function.name, args)
-                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
+            # Execute tools in parallel
+            def _exec(tc):
+                args = json.loads(tc.function.arguments)
+                return tc, execute_tool(tc.function.name, args)
 
+            with ThreadPoolExecutor(max_workers=6) as pool:
+                results = list(pool.map(_exec, msg.tool_calls))
+
+            for tc, result in results:
+                messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
                 try:
                     parsed = json.loads(result)
                     if isinstance(parsed, list):
@@ -578,23 +592,48 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
 
     yield event("start", query=query, model=model)
 
-    # Phase 1: Follow-up questions
-    yield event("phase", name="Generating clarifying questions...")
-    try:
-        followups = _generate_followups(client, model, query)
-        if followups:
-            yield event("followups", questions=followups)
-    except Exception:
-        pass  # Non-critical, continue without
+    # Phase 1: Run followups, knowledge check, and plan in parallel
+    yield event("phase", name="Preparing research...")
 
-    # Phase 2: Research plan
-    yield event("phase", name="Planning research...")
-    try:
-        plan = _generate_plan(client, model, query)
-        if plan:
-            yield event("plan", content=plan)
-    except Exception:
-        pass  # Non-critical, continue without
+    followups = []
+    prior_knowledge = None
+    plan = ""
+
+    def _get_followups():
+        nonlocal followups
+        try:
+            followups = _generate_followups(client, model, query)
+        except Exception:
+            pass
+
+    def _get_knowledge():
+        nonlocal prior_knowledge
+        try:
+            prior_knowledge = knowledge.get_prior_knowledge(query)
+        except Exception:
+            pass
+
+    def _get_plan():
+        nonlocal plan
+        try:
+            plan = _generate_plan(client, model, query)
+        except Exception:
+            pass
+
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        pool.submit(_get_followups)
+        pool.submit(_get_knowledge)
+        f_plan = pool.submit(_get_plan)
+        f_plan.result()  # wait for all to finish
+
+    if followups:
+        yield event("followups", questions=followups)
+    if prior_knowledge:
+        yield event("prior_knowledge", found=True, summary=prior_knowledge[:500])
+    else:
+        yield event("prior_knowledge", found=False)
+    if plan:
+        yield event("plan", content=plan)
 
     # Phase 3: Execute research
     yield event("phase", name="Researching...")
@@ -637,6 +676,14 @@ When done, write a structured report with:
 
 Do NOT include images, videos, or documents sections. Those are appended automatically."""
 
+    if prior_knowledge:
+        dynamic_prompt += (
+            "\n\n## Prior Research Context\n"
+            "You have relevant knowledge from previous research sessions:\n"
+            f"{prior_knowledge}\n\n"
+            "Use this as context but verify key claims with fresh sources."
+        )
+
     messages = [
         {"role": "system", "content": dynamic_prompt},
         {"role": "user", "content": query},
@@ -664,6 +711,32 @@ Do NOT include images, videos, or documents sections. Those are appended automat
         for ev in event_sink2:
             yield ev
 
+    # Backfill: force-call any enabled media tools that returned nothing
+    backfill = {
+        "search_images": "images",
+        "search_videos": "videos",
+        "search_news": "news",
+        "search_documents": "docs",
+    }
+    for tool_name, key in backfill.items():
+        if not collected[key] and tool_name not in disabled_tools:
+            yield event("tool_call", tool=tool_name, args={"query": query}, label=f"(backfill) {query[:80]}")
+            try:
+                result = execute_tool(tool_name, {"query": query, "limit": 5})
+                parsed = json.loads(result)
+                if isinstance(parsed, list):
+                    collected[key].extend(parsed)
+                    yield event("tool_result", tool=tool_name, count=len(parsed))
+            except Exception:
+                pass
+
+    # Index report into knowledge graph (background, don't block response)
+    if report_content:
+        threading.Thread(
+            target=lambda: knowledge.index_report(query, report_content),
+            daemon=True,
+        ).start()
+
     # Append media
     appendix = _build_media_appendix(
         collected["images"], collected["videos"], collected["news"],
@@ -673,6 +746,14 @@ Do NOT include images, videos, or documents sections. Those are appended automat
         report_content = (report_content or "").rstrip() + "\n\n" + appendix
 
     yield event("report", content=report_content or "No results found.")
+
+    # Save to history
+    try:
+        session_id = history.save(query, report_content or "", model, sources)
+        yield event("saved", session_id=session_id)
+    except Exception:
+        pass
+
     yield event("done")
 
 
