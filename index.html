@@ -266,6 +266,71 @@
   .step .label { flex: 1; line-height: 1.5; word-break: break-word; }
   .step .label strong { color: var(--text); font-weight: 600; }
 
+  /* Live media strips */
+  .media-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    scrollbar-width: thin;
+    padding: 8px 0;
+    animation: fadeIn 0.3s ease;
+  }
+  .media-strip::-webkit-scrollbar { height: 4px; }
+  .media-strip::-webkit-scrollbar-thumb { background: var(--border-light); border-radius: 2px; }
+  .media-strip .media-card {
+    flex-shrink: 0;
+    width: 160px;
+    background: var(--surface);
+    border: 1.5px solid var(--border-light);
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.15s;
+    cursor: pointer;
+    text-decoration: none;
+    color: var(--text);
+  }
+  .media-strip .media-card:hover { border-color: var(--accent); }
+  .media-card img {
+    width: 100%; height: 100px;
+    object-fit: cover;
+    display: block;
+    background: var(--surface2);
+  }
+  .media-card .media-title {
+    padding: 6px 8px;
+    font-size: 11px;
+    line-height: 1.3;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    color: var(--text2);
+  }
+  .media-strip.news-strip .media-card,
+  .media-strip.docs-strip .media-card {
+    width: 220px;
+  }
+  .media-strip.news-strip .media-card img,
+  .media-strip.docs-strip .media-card img { display: none; }
+  .media-strip.news-strip .media-title,
+  .media-strip.docs-strip .media-title {
+    padding: 10px 12px;
+    font-size: 12px;
+    -webkit-line-clamp: 3;
+  }
+  .media-section-label {
+    font-family: var(--font-heading);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text2);
+    padding: 8px 0 2px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   /* Knowledge status */
   .step.knowledge-empty { opacity: 0.6; }
   .step .label .kb-hint {
@@ -914,6 +979,38 @@ function go() {
       el.innerHTML = `<div class="icon ${meta.cls}"><i class="ti ${meta.ti}"></i></div><div class="label"><strong>${name}</strong> ${escHtml(ev.label)}</div>`;
       feed.appendChild(el);
       if (activeTabId === id) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    if (ev.type === 'media' && ev.items && ev.items.length) {
+      const labels = { images: 'Images', videos: 'Videos', news: 'News', docs: 'Documents', social: 'Social' };
+      const icons = { images: 'ti-photo', videos: 'ti-player-play', news: 'ti-news', docs: 'ti-file-text', social: 'ti-brand-twitter' };
+      const label = document.createElement('div');
+      label.className = 'media-section-label';
+      label.innerHTML = `<i class="ti ${icons[ev.kind] || 'ti-file'}"></i> ${labels[ev.kind] || ev.kind}`;
+      feed.appendChild(label);
+
+      const strip = document.createElement('div');
+      strip.className = `media-strip ${ev.kind}-strip`;
+      ev.items.forEach(item => {
+        const url = item.url || item.img_src || '';
+        const title = item.title || '';
+        const thumb = item.thumbnail || item.img_src || url;
+        if (!url) return;
+        const card = document.createElement('a');
+        card.className = 'media-card';
+        card.href = url;
+        card.target = '_blank';
+        card.rel = 'noopener';
+        if (ev.kind === 'images' || ev.kind === 'videos') {
+          card.innerHTML = `<img src="${escHtml(thumb)}" alt="${escHtml(title)}" loading="lazy" onerror="this.style.display='none'"><div class="media-title">${escHtml(title)}</div>`;
+        } else {
+          const meta = item.date ? item.date.slice(0, 10) : (item.source || '');
+          card.innerHTML = `<div class="media-title"><strong>${escHtml(title)}</strong>${meta ? '<br><span style="color:var(--text2);font-size:10px">' + escHtml(meta) + '</span>' : ''}</div>`;
+        }
+        strip.appendChild(card);
+      });
+      feed.appendChild(strip);
+      if (activeTabId === id) strip.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     }
 
     if (ev.type === 'tool_error') {

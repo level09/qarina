@@ -180,7 +180,7 @@ TOOLS = [
     },
 ]
 
-http = httpx.Client(timeout=60.0)
+http = httpx.Client(timeout=30.0)
 
 
 def _sonar_research(query: str) -> str:
@@ -364,6 +364,8 @@ def execute_tool(name: str, args: dict) -> str:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except httpx.HTTPStatusError as e:
         return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"})
+    except (httpx.TimeoutException, httpx.ConnectError) as e:
+        return json.dumps({"error": f"timed out: {name}"})
     except Exception as e:
         return json.dumps({"error": str(e)})
 
@@ -491,6 +493,41 @@ def _generate_followups(client, model: str, query: str) -> list[str]:
     return [q.strip() for q in text.strip().split("\n") if q.strip()][:3]
 
 
+def _ensure_markdown(content: str) -> str:
+    """If the LLM returned JSON instead of markdown, convert it."""
+    stripped = content.strip()
+    if stripped.startswith("```json"):
+        stripped = stripped.removeprefix("```json").removesuffix("```").strip()
+    if not (stripped.startswith("{") or stripped.startswith("[")):
+        return content
+    try:
+        data = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        return content
+    # Convert JSON dict to markdown
+    lines = []
+    if isinstance(data, dict):
+        for key, val in data.items():
+            heading = key.replace("_", " ").title()
+            lines.append(f"## {heading}")
+            if isinstance(val, str):
+                lines.append(val)
+            elif isinstance(val, list):
+                for item in val:
+                    if isinstance(item, dict):
+                        parts = []
+                        for k, v in item.items():
+                            parts.append(f"**{k}**: {v}")
+                        lines.append("- " + " | ".join(parts))
+                    else:
+                        lines.append(f"- {item}")
+            elif isinstance(val, dict):
+                for k, v in val.items():
+                    lines.append(f"**{k}**: {v}")
+            lines.append("")
+    return "\n".join(lines) if lines else content
+
+
 def _run_agent_loop(client, model, messages, active_tools, collected, events):
     """Run the core tool-calling loop. Appends events to the list, returns report content."""
     iteration = 0
@@ -540,7 +577,11 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
                     if isinstance(parsed, list):
                         events.append(event("tool_result", tool=tc.function.name, count=len(parsed)))
                         if tc.function.name in key_map:
-                            collected[key_map[tc.function.name]].extend(parsed)
+                            media_key = key_map[tc.function.name]
+                            collected[media_key].extend(parsed)
+                            # Stream media to UI immediately
+                            if parsed:
+                                events.append(event("media", kind=media_key, items=parsed[:6]))
                     elif "error" in parsed:
                         if tc.function.name == "search_social":
                             collected["social"].append(parsed)
@@ -567,6 +608,8 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
             })
             continue
 
+        # Safety net: convert JSON output to markdown
+        content = _ensure_markdown(content)
         return content
 
     return ""
@@ -668,12 +711,21 @@ Your available tools:
 
 Use web_research as your PRIMARY tool for factual investigation.{must_use_instruction}
 
-When done, write a structured report with:
-- **Summary**: Key findings in 2-3 sentences
-- **Sources**: URLs with what each contributed
-- **Key Findings**: Organized by theme
-- **Gaps**: What's still missing or unverified
+When done, write a structured report in MARKDOWN (not JSON). Use this format:
 
+## Summary
+Key findings in 2-3 sentences.
+
+## Sources
+- [Source name](URL) - what it contributed
+
+## Key Findings
+Organized by theme with headers.
+
+## Gaps
+What's still missing or unverified.
+
+IMPORTANT: Write in plain markdown with headers, bullets, and links. Never output JSON.
 Do NOT include images, videos, or documents sections. Those are appended automatically."""
 
     if prior_knowledge:
@@ -718,15 +770,27 @@ Do NOT include images, videos, or documents sections. Those are appended automat
         "search_news": "news",
         "search_documents": "docs",
     }
-    for tool_name, key in backfill.items():
-        if not collected[key] and tool_name not in disabled_tools:
-            yield event("tool_call", tool=tool_name, args={"query": query}, label=f"(backfill) {query[:80]}")
+    # Run all backfill calls in parallel
+    backfill_needed = {tn: k for tn, k in backfill.items() if not collected[k] and tn not in disabled_tools}
+    if backfill_needed:
+        for tn in backfill_needed:
+            yield event("tool_call", tool=tn, args={"query": query}, label=f"(backfill) {query[:80]}")
+
+        def _backfill(tool_name):
+            return tool_name, execute_tool(tool_name, {"query": query, "limit": 5})
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            bf_results = list(pool.map(_backfill, backfill_needed.keys()))
+
+        for tool_name, result in bf_results:
+            key = backfill_needed[tool_name]
             try:
-                result = execute_tool(tool_name, {"query": query, "limit": 5})
                 parsed = json.loads(result)
                 if isinstance(parsed, list):
                     collected[key].extend(parsed)
                     yield event("tool_result", tool=tool_name, count=len(parsed))
+                    if parsed:
+                        yield event("media", kind=key, items=parsed[:6])
             except Exception:
                 pass
 
