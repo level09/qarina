@@ -943,12 +943,13 @@ let tabs = [];
 let activeTabId = null;
 let nextTabId = 1;
 
-function createTab(query) {
+function createTab(query, opts = {}) {
   const id = nextTabId++;
   const tab = {
     id,
     query,
-    status: 'running',
+    status: opts.status || 'running',
+    sessionId: opts.sessionId || null,
     reportMd: '',
     ws: null,
   };
@@ -959,11 +960,13 @@ function createTab(query) {
   panel.className = 'tab-panel';
   panel.id = `panel-${id}`;
 
-  const status = document.createElement('div');
-  status.className = 'step';
-  status.id = `status-${id}`;
-  status.innerHTML = '<div class="icon think"><span class="spinner"></span></div><div class="label">Connecting...</div>';
-  panel.appendChild(status);
+  if (!opts.skipStatus) {
+    const status = document.createElement('div');
+    status.className = 'step';
+    status.id = `status-${id}`;
+    status.innerHTML = '<div class="icon think"><span class="spinner"></span></div><div class="label">Connecting...</div>';
+    panel.appendChild(status);
+  }
 
   const feed = document.createElement('div');
   feed.className = 'feed';
@@ -974,6 +977,7 @@ function createTab(query) {
 
   renderTabs();
   switchTab(id);
+  saveTabs();
   return tab;
 }
 
@@ -1003,10 +1007,16 @@ function switchTab(id) {
   panels.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
   const target = $(`#panel-${id}`);
   if (target) target.classList.add('active');
-  // Hide empty state when tabs exist
   const empty = $('#panel-empty');
   if (empty) empty.classList.remove('active');
   renderTabs();
+  // Update URL without pushing history
+  const tab = tabs.find(t => t.id === id);
+  if (tab && tab.sessionId) {
+    history.replaceState({ tabId: id, sessionId: tab.sessionId }, '', `/research/${tab.sessionId}`);
+  } else {
+    history.replaceState({ tabId: id }, '', '/');
+  }
 }
 
 function closeTab(id) {
@@ -1022,10 +1032,12 @@ function closeTab(id) {
     activeTabId = null;
     const empty = $('#panel-empty');
     if (empty) empty.classList.add('active');
+    history.replaceState(null, '', '/');
   } else if (activeTabId === id) {
     switchTab(tabs[Math.min(idx, tabs.length - 1)].id);
   }
   renderTabs();
+  saveTabs();
 }
 
 function updateTabStatus(id, status) {
@@ -1239,10 +1251,18 @@ function go() {
       if (activeTabId === id) div.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
+    if (ev.type === 'saved' && ev.session_id) {
+      tab.sessionId = ev.session_id;
+      // Push to browser history so this session is bookmarkable/shareable
+      history.pushState({ tabId: id, sessionId: ev.session_id }, '', `/research/${ev.session_id}`);
+      saveTabs();
+    }
+
     if (ev.type === 'done') {
       const statusEl = $(`#status-${id}`);
       if (statusEl) statusEl.remove();
       updateTabStatus(id, 'done');
+      saveTabs();
     }
   };
 
@@ -1393,6 +1413,72 @@ function copyToClipboard(text) {
   });
 }
 
+// --- URL routing & tab persistence ---
+function saveTabs() {
+  const data = tabs
+    .filter(t => t.sessionId)
+    .map(t => ({ sessionId: t.sessionId, query: t.query }));
+  sessionStorage.setItem('openTabs', JSON.stringify(data));
+  sessionStorage.setItem('activeSessionId', tabs.find(t => t.id === activeTabId)?.sessionId || '');
+}
+
+async function restoreTabs() {
+  // Check URL first: /research/:id
+  const match = location.pathname.match(/^\/research\/(\d+)$/);
+  if (match) {
+    await openHistorySession(Number(match[1]));
+    return;
+  }
+
+  // Restore tabs from sessionStorage
+  const saved = sessionStorage.getItem('openTabs');
+  if (!saved) return;
+  try {
+    const data = JSON.parse(saved);
+    const activeId = sessionStorage.getItem('activeSessionId');
+    for (const item of data) {
+      await openHistorySession(item.sessionId, { silent: true });
+    }
+    // Switch to previously active tab
+    if (activeId) {
+      const t = tabs.find(t => t.sessionId === Number(activeId));
+      if (t) switchTab(t.id);
+    }
+  } catch (e) {
+    console.error('Tab restore failed', e);
+  }
+}
+
+// Browser back/forward
+window.addEventListener('popstate', (e) => {
+  if (e.state && e.state.sessionId) {
+    const tab = tabs.find(t => t.sessionId === e.state.sessionId);
+    if (tab) {
+      activeTabId = tab.id;
+      panels.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      const target = $(`#panel-${tab.id}`);
+      if (target) target.classList.add('active');
+      renderTabs();
+    } else {
+      openHistorySession(e.state.sessionId);
+    }
+  } else if (e.state && e.state.tabId) {
+    const tab = tabs.find(t => t.id === e.state.tabId);
+    if (tab) switchTab(tab.id);
+  } else {
+    // Back to home
+    if (tabs.length) {
+      activeTabId = tabs[0].id;
+      panels.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+      $(`#panel-${activeTabId}`)?.classList.add('active');
+      renderTabs();
+    }
+  }
+});
+
+// Restore on load
+restoreTabs();
+
 // --- History drawer ---
 const drawerOverlay = $('#drawer-overlay');
 const historyList = $('#history-list');
@@ -1446,20 +1532,24 @@ async function loadHistory() {
   }
 }
 
-async function openHistorySession(id) {
+async function openHistorySession(id, opts = {}) {
+  // Don't reopen if already in a tab
+  const existing = tabs.find(t => t.sessionId === id);
+  if (existing) {
+    switchTab(existing.id);
+    if (!opts.silent) drawerOverlay.classList.remove('open');
+    return;
+  }
+
   try {
     const res = await fetch(`/api/history/${id}`);
     const session = await res.json();
     if (!session.report) return;
 
-    drawerOverlay.classList.remove('open');
+    if (!opts.silent) drawerOverlay.classList.remove('open');
 
-    const tab = createTab(session.query);
+    const tab = createTab(session.query, { status: 'done', sessionId: id, skipStatus: true });
     tab.reportMd = session.report;
-    tab.status = 'done';
-
-    const statusEl = $(`#status-${tab.id}`);
-    if (statusEl) statusEl.remove();
 
     const panel = $(`#panel-${tab.id}`);
     if (!panel) return;

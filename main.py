@@ -92,6 +92,7 @@ async def api_history_delete(request):
 app = Starlette(
     routes=[
         Route("/", index),
+        Route("/research/{id:int}", index),
         Route("/api/history", api_history_list),
         Route("/api/history/{id:int}", api_history_get),
         Route("/api/history/{id:int}", api_history_delete, methods=["DELETE"]),
