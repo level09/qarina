@@ -1,8 +1,8 @@
 """
 Multi-source research agent.
-Uses OpenRouter (DeepSeek default) as orchestrator with multiple research sources:
+Uses OpenRouter (Gemini Flash default) as orchestrator with multiple research sources:
 - Perplexity Sonar (via OpenRouter) for AI-powered web research
-- SearXNG for image, video, news, and document search
+- Serper (Google Search API) for image, video, news, and document search
 - Jina Reader for page scraping
 - youtube-transcript-api for YouTube transcripts
 Yields structured events for the UI via websocket.
@@ -26,7 +26,7 @@ import knowledge
 load_dotenv()
 
 MODEL = os.environ.get("MODEL", "google/gemini-2.5-flash")
-SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng.example.com:8888")
+SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 JINA_PREFIX = "https://r.jina.ai/"
 
 TOOLS = [
@@ -201,51 +201,68 @@ def _sonar_research(query: str) -> str:
     return json.dumps({"answer": content}, indent=2)
 
 
-def _searxng_search(query: str, category: str, limit: int = 5) -> str:
-    """Query SearXNG for a specific category."""
-    params = {"q": query, "categories": category, "format": "json"}
-    r = http.get(f"{SEARXNG_URL}/search", params=params)
+SERPER_ENDPOINTS = {
+    "images": "https://google.serper.dev/images",
+    "videos": "https://google.serper.dev/videos",
+    "news": "https://google.serper.dev/news",
+    "search": "https://google.serper.dev/search",
+}
+
+
+def _serper_search(query: str, category: str, limit: int = 5) -> str:
+    """Query Serper (Google Search API) for a specific category."""
+    endpoint = SERPER_ENDPOINTS.get(category, SERPER_ENDPOINTS["search"])
+    payload = {"q": query, "num": limit}
+    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+    r = http.post(endpoint, json=payload, headers=headers)
     r.raise_for_status()
-    data = r.json().get("results", [])[:limit]
+    data = r.json()
 
     if category == "images":
+        items = data.get("images", [])[:limit]
         results = [
             {
-                "url": item.get("img_src") or item.get("url", ""),
+                "url": item.get("imageUrl", ""),
                 "title": item.get("title", ""),
-                "source": item.get("source", "") or item.get("engine", ""),
-                "thumbnail": item.get("thumbnail_src") or item.get("img_src") or item.get("url", ""),
+                "source": item.get("source", "") or item.get("domain", ""),
+                "thumbnail": item.get("thumbnailUrl", "") or item.get("imageUrl", ""),
             }
-            for item in data
+            for item in items
         ]
     elif category == "videos":
+        items = data.get("videos", [])[:limit]
         results = [
             {
-                "url": item.get("url", ""),
+                "url": item.get("link", ""),
                 "title": item.get("title", ""),
-                "duration": item.get("length") or item.get("duration", ""),
-                "thumbnail": item.get("thumbnail", "") or item.get("img_src", ""),
+                "duration": item.get("duration", ""),
+                "thumbnail": item.get("imageUrl", ""),
+                "source": item.get("source", ""),
+                "date": item.get("date", ""),
             }
-            for item in data
+            for item in items
         ]
     elif category == "news":
+        items = data.get("news", [])[:limit]
         results = [
             {
-                "url": item.get("url", ""),
+                "url": item.get("link", ""),
                 "title": item.get("title", ""),
-                "date": item.get("publishedDate", "") or item.get("pubdate", ""),
-                "source": item.get("engine", "") or item.get("source", ""),
+                "date": item.get("date", ""),
+                "source": item.get("source", ""),
+                "thumbnail": item.get("imageUrl", ""),
             }
-            for item in data
+            for item in items
         ]
-    else:  # files
+    else:  # general/documents
+        items = data.get("organic", [])[:limit]
         results = [
             {
-                "url": item.get("url", ""),
+                "url": item.get("link", ""),
                 "title": item.get("title", ""),
-                "source": item.get("engine", "") or item.get("source", ""),
+                "source": item.get("domain", "") or item.get("source", ""),
             }
-            for item in data
+            for item in items
         ]
 
     return json.dumps(results, indent=2)
@@ -295,21 +312,21 @@ SITE_FILTERS = {
 
 
 def _search_social(query: str, platform: str) -> str:
-    """Search social media. Twitter uses Grok, others use SearXNG site: filter."""
+    """Search social media. Twitter uses Grok, others use Serper with site: filter."""
     if platform == "twitter":
         return _grok_x_search(query)
 
     site_filter = SITE_FILTERS.get(platform, "")
     search_query = f"{query} {site_filter}".strip()
-    params = {"q": search_query, "format": "json"}
-    r = http.get(f"{SEARXNG_URL}/search", params=params)
+    headers = {"X-API-KEY": SERPER_API_KEY, "Content-Type": "application/json"}
+    r = http.post("https://google.serper.dev/search", json={"q": search_query, "num": 8}, headers=headers)
     r.raise_for_status()
-    data = r.json().get("results", [])[:8]
+    data = r.json().get("organic", [])[:8]
     results = [
         {
-            "url": item.get("url", ""),
+            "url": item.get("link", ""),
             "title": item.get("title", ""),
-            "snippet": (item.get("content", "") or "")[:300],
+            "snippet": (item.get("snippet", "") or "")[:300],
             "platform": platform,
         }
         for item in data
@@ -347,13 +364,13 @@ def execute_tool(name: str, args: dict) -> str:
         if name == "web_research":
             return _sonar_research(args["query"])
         elif name == "search_images":
-            return _searxng_search(args["query"], "images", args.get("limit", 5))
+            return _serper_search(args["query"], "images", args.get("limit", 5))
         elif name == "search_videos":
-            return _searxng_search(args["query"], "videos", args.get("limit", 5))
+            return _serper_search(args["query"], "videos", args.get("limit", 5))
         elif name == "search_news":
-            return _searxng_search(args["query"], "news", args.get("limit", 5))
+            return _serper_search(args["query"], "news", args.get("limit", 5))
         elif name == "search_documents":
-            return _searxng_search(args.get("query", "") + " filetype:pdf", "files", args.get("limit", 5))
+            return _serper_search(args.get("query", "") + " filetype:pdf", "search", args.get("limit", 5))
         elif name == "read_page":
             return _jina_read(args["url"])
         elif name == "get_video_transcript":
