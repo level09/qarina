@@ -14,7 +14,9 @@ import re
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from typing import Generator
+from urllib.parse import quote
 
 import httpx
 from openai import OpenAI
@@ -157,6 +159,30 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "analyze_video_url",
+            "description": (
+                "Build an evidence-oriented dossier for a YouTube video: metadata, "
+                "timestamped transcript, thumbnails, and verification pivots. "
+                "Use this for videos that may contain eyewitness footage, testimony, "
+                "news footage, or other human-rights documentation value."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "youtube_url": {"type": "string", "description": "YouTube video URL or video ID"},
+                    "title": {"type": "string", "description": "Known title, if already available"},
+                    "source": {"type": "string", "description": "Known source/channel, if already available"},
+                    "date": {"type": "string", "description": "Known publish date, if already available"},
+                    "duration": {"type": "string", "description": "Known duration, if already available"},
+                    "thumbnail": {"type": "string", "description": "Known thumbnail URL, if already available"},
+                },
+                "required": ["youtube_url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_social",
             "description": (
                 "Search social media platforms. Use when the topic involves public discourse, "
@@ -268,6 +294,106 @@ def _serper_search(query: str, category: str, limit: int = 5) -> str:
     return json.dumps(results, indent=2)
 
 
+def _video_search_queries(query: str) -> list[str]:
+    """Return deterministic video queries biased toward evidence-rich YouTube results."""
+    base = query.strip()
+    return [
+        base,
+        f"{base} youtube eyewitness footage testimony",
+        f"{base} site:youtube.com",
+    ]
+
+
+def _dedupe_results(items: list[dict]) -> list[dict]:
+    seen = set()
+    deduped = []
+    for item in items:
+        url = item.get("url", "")
+        key = url or item.get("title", "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _search_videos(query: str, limit: int = 5) -> str:
+    """Search videos and enrich likely YouTube results with evidence dossiers."""
+    raw_results = []
+    for search_query in _video_search_queries(query):
+        raw_results.extend(json.loads(_serper_search(search_query, "videos", limit)))
+    results = _dedupe_results(raw_results)[:limit]
+    enriched = []
+    dossier_count = 0
+    for item in results:
+        if dossier_count < 3 and _extract_video_id(item.get("url", "")) != item.get("url", ""):
+            dossier = _analyze_video_url(
+                item.get("url", ""),
+                title=item.get("title", ""),
+                source=item.get("source", ""),
+                date=item.get("date", ""),
+                duration=item.get("duration", ""),
+                thumbnail=item.get("thumbnail", ""),
+            )
+            item["dossier"] = dossier
+            dossier_count += 1
+        enriched.append(item)
+    return json.dumps(enriched, indent=2)
+
+
+def _emit_video_results(parsed: list[dict], collected: dict, events: list[dict], tool_name: str = "search_videos"):
+    collected["videos"].extend(parsed)
+    events.append(event("tool_result", tool=tool_name, count=len(parsed)))
+    if parsed:
+        events.append(event("media", kind="videos", items=parsed[:6]))
+        dossiers = [item["dossier"] for item in parsed if item.get("dossier")]
+        if dossiers:
+            events.append(event("video_dossiers", items=dossiers[:3]))
+
+
+def _prefetch_video_evidence(query: str, collected: dict, events: list[dict], disabled_tools: set):
+    if "search_videos" in disabled_tools:
+        return
+    events.append(event("tool_call", tool="search_videos", args={"query": query, "limit": 8}, label=f"(video evidence) {query[:80]}"))
+    result = execute_tool("search_videos", {"query": query, "limit": 8})
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        events.append(event("tool_error", tool="search_videos", error="Video search returned invalid JSON"))
+        return
+    if isinstance(parsed, list):
+        _emit_video_results(parsed, collected, events)
+    elif isinstance(parsed, dict) and parsed.get("error"):
+        events.append(event("tool_error", tool="search_videos", error=parsed["error"]))
+
+
+def _prefetched_video_context(videos: list[dict]) -> str:
+    lines = []
+    for video in videos[:5]:
+        dossier = video.get("dossier") or {}
+        transcript = dossier.get("transcript", "")
+        excerpt = "\n".join(transcript.splitlines()[:8])
+        lines.append(
+            "\n".join(filter(None, [
+                f"- Title: {video.get('title', '')}",
+                f"  URL: {video.get('url', '')}",
+                f"  Source: {video.get('source', '')}",
+                f"  Date: {video.get('date', '')}",
+                f"  Transcript excerpt:\n{excerpt}" if excerpt else "",
+            ]))
+        )
+    return "\n\n".join(lines)
+
+
+def _llm_tools_after_prefetch(active_tools: list[dict], collected: dict) -> list[dict]:
+    if not collected.get("videos"):
+        return active_tools
+    return [
+        tool for tool in active_tools
+        if tool["function"]["name"] != "search_videos"
+    ]
+
+
 def _jina_read(url: str) -> str:
     """Read a page via Jina Reader."""
     r = http.get(f"{JINA_PREFIX}{url}", headers={"Accept": "text/markdown"})
@@ -279,7 +405,7 @@ def _jina_read(url: str) -> str:
 def _extract_video_id(url_or_id: str) -> str:
     """Extract YouTube video ID from URL or return as-is if already an ID."""
     patterns = [
-        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/)([a-zA-Z0-9_-]{11})',
+        r'(?:youtube\.com/watch\?v=|youtu\.be/|youtube\.com/embed/|youtube\.com/shorts/)([a-zA-Z0-9_-]{11})',
         r'^([a-zA-Z0-9_-]{11})$',
     ]
     for pattern in patterns:
@@ -289,14 +415,136 @@ def _extract_video_id(url_or_id: str) -> str:
     return url_or_id
 
 
-def _youtube_transcript(youtube_url: str) -> str:
-    """Get transcript from a YouTube video."""
+def _youtube_transcript_entries(youtube_url: str) -> list[dict]:
+    """Get timestamped transcript entries from a YouTube video."""
     from youtube_transcript_api import YouTubeTranscriptApi
 
     video_id = _extract_video_id(youtube_url)
-    transcript = YouTubeTranscriptApi.get_transcript(video_id)
-    lines = [entry["text"] for entry in transcript]
-    full_text = " ".join(lines)
+    if hasattr(YouTubeTranscriptApi, "get_transcript"):
+        return _normalize_transcript_entries(YouTubeTranscriptApi.get_transcript(video_id))
+    return _normalize_transcript_entries(YouTubeTranscriptApi().fetch(video_id))
+
+
+def _normalize_transcript_entries(entries) -> list[dict]:
+    normalized = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            text = entry.get("text", "")
+            start = entry.get("start", 0)
+            duration = entry.get("duration", 0)
+        else:
+            text = getattr(entry, "text", "")
+            start = getattr(entry, "start", 0)
+            duration = getattr(entry, "duration", 0)
+        normalized.append({"text": text, "start": start, "duration": duration})
+    return normalized
+
+
+def _format_seconds(seconds: float) -> str:
+    seconds = int(seconds or 0)
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{minutes:02d}:{secs:02d}"
+
+
+def _timestamped_transcript(entries: list[dict], limit: int = 10000) -> str:
+    lines = []
+    for entry in entries:
+        text = " ".join(str(entry.get("text", "")).split())
+        if not text:
+            continue
+        lines.append(f"[{_format_seconds(entry.get('start', 0))}] {text}")
+    transcript = "\n".join(lines)
+    if len(transcript) > limit:
+        transcript = transcript[:limit] + "\n... [truncated]"
+    return transcript
+
+
+def _youtube_thumbnail_urls(video_id: str, fallback: str = "") -> list[str]:
+    urls = [
+        f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg",
+        f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg",
+    ]
+    if fallback and fallback not in urls:
+        urls.insert(0, fallback)
+    return urls
+
+
+def _build_video_dossier(video: dict, transcript_entries: list[dict] | None = None, transcript_error: str = "") -> dict:
+    """Build a compact evidence-oriented dossier for a video result."""
+    url = video.get("url") or video.get("youtube_url", "")
+    video_id = _extract_video_id(url)
+    thumbnail = video.get("thumbnail", "")
+    thumbnail_urls = _youtube_thumbnail_urls(video_id, thumbnail) if len(video_id) == 11 else ([thumbnail] if thumbnail else [])
+    primary_thumb = thumbnail_urls[0] if thumbnail_urls else ""
+    transcript_entries = transcript_entries or []
+
+    return {
+        "video_id": video_id,
+        "url": url,
+        "title": video.get("title", ""),
+        "source": video.get("source", ""),
+        "date": video.get("date", ""),
+        "duration": video.get("duration", ""),
+        "captured_at": datetime.now(timezone.utc).isoformat(),
+        "transcript": _timestamped_transcript(transcript_entries) if transcript_entries else "",
+        "transcript_error": transcript_error,
+        "verification_pivots": {
+            "thumbnails": thumbnail_urls,
+            "reverse_image_search": f"https://lens.google.com/uploadbyurl?url={quote(primary_thumb, safe='')}" if primary_thumb else "",
+            "youtube_data_viewer": f"https://www.ytdataviewer.com/video/{video_id}" if len(video_id) == 11 else "",
+        },
+        "evidence": {
+            "platform": "youtube" if len(video_id) == 11 else "video",
+            "capture_method": "metadata_and_transcript",
+            "source_url": url,
+            "original_title": video.get("title", ""),
+            "original_source": video.get("source", ""),
+        },
+    }
+
+
+def _analyze_video_url(
+    youtube_url: str,
+    title: str = "",
+    source: str = "",
+    date: str = "",
+    duration: str = "",
+    thumbnail: str = "",
+) -> dict:
+    video = {
+        "url": youtube_url,
+        "title": title,
+        "source": source,
+        "date": date,
+        "duration": duration,
+        "thumbnail": thumbnail,
+    }
+    try:
+        r = http.get("https://www.youtube.com/oembed", params={"url": youtube_url, "format": "json"})
+        if r.status_code == 200:
+            meta = r.json()
+            video["title"] = video["title"] or meta.get("title", "")
+            video["source"] = video["source"] or meta.get("author_name", "")
+            video["thumbnail"] = video["thumbnail"] or meta.get("thumbnail_url", "")
+    except Exception:
+        pass
+
+    try:
+        transcript = _youtube_transcript_entries(youtube_url)
+        return _build_video_dossier(video, transcript)
+    except Exception as e:
+        return _build_video_dossier(video, transcript_error=str(e))
+
+
+def _youtube_transcript(youtube_url: str) -> str:
+    """Get transcript from a YouTube video."""
+    video_id = _extract_video_id(youtube_url)
+    transcript = _youtube_transcript_entries(youtube_url)
+    full_text = _timestamped_transcript(transcript)
     # Truncate if very long
     if len(full_text) > 10000:
         full_text = full_text[:10000] + "... [truncated]"
@@ -335,13 +583,13 @@ def _search_social(query: str, platform: str) -> str:
 
 
 def _grok_x_search(query: str) -> str:
-    """Search X/Twitter using Grok via OpenRouter."""
+    """Search X/Twitter using Grok with OpenRouter's xAI web/X search tool."""
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
     )
     response = client.chat.completions.create(
-        model="x-ai/grok-3-mini",
+        model="x-ai/grok-4.20",
         messages=[
             {
                 "role": "system",
@@ -354,6 +602,9 @@ def _grok_x_search(query: str) -> str:
             {"role": "user", "content": f"Search X/Twitter for: {query}"},
         ],
         max_tokens=4096,
+        extra_body={
+            "plugins": [{"id": "web", "engine": "native", "max_results": 10}],
+        },
     )
     content = response.choices[0].message.content or ""
     return json.dumps({"platform": "twitter", "results": content}, indent=2)
@@ -366,7 +617,7 @@ def execute_tool(name: str, args: dict) -> str:
         elif name == "search_images":
             return _serper_search(args["query"], "images", args.get("limit", 5))
         elif name == "search_videos":
-            return _serper_search(args["query"], "videos", args.get("limit", 5))
+            return _search_videos(args["query"], args.get("limit", 5))
         elif name == "search_news":
             return _serper_search(args["query"], "news", args.get("limit", 5))
         elif name == "search_documents":
@@ -375,13 +626,22 @@ def execute_tool(name: str, args: dict) -> str:
             return _jina_read(args["url"])
         elif name == "get_video_transcript":
             return _youtube_transcript(args["youtube_url"])
+        elif name == "analyze_video_url":
+            return json.dumps(_analyze_video_url(
+                args["youtube_url"],
+                title=args.get("title", ""),
+                source=args.get("source", ""),
+                date=args.get("date", ""),
+                duration=args.get("duration", ""),
+                thumbnail=args.get("thumbnail", ""),
+            ), indent=2)
         elif name == "search_social":
             return _search_social(args["query"], args["platform"])
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except httpx.HTTPStatusError as e:
         return json.dumps({"error": f"HTTP {e.response.status_code}: {e.response.text[:200]}"})
-    except (httpx.TimeoutException, httpx.ConnectError) as e:
+    except (httpx.TimeoutException, httpx.ConnectError):
         return json.dumps({"error": f"timed out: {name}"})
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -411,11 +671,32 @@ def _build_media_appendix(images, videos, news, docs, social=None) -> str:
             title = vid.get("title", "") or "Video"
             duration = vid.get("duration", "")
             thumb = vid.get("thumbnail", "")
+            dossier = vid.get("dossier") or {}
             if url:
                 dur_str = f" ({duration})" if duration else ""
                 if thumb:
                     lines.append(f"[![{title}]({thumb})]({url})")
                 lines.append(f"[{title}{dur_str}]({url})")
+                if dossier.get("transcript"):
+                    lines.append("")
+                    lines.append("**Evidence dossier:**")
+                    if dossier.get("source"):
+                        lines.append(f"- Source/channel: {dossier['source']}")
+                    if dossier.get("date"):
+                        lines.append(f"- Published: {dossier['date']}")
+                    lines.append(f"- Captured: {dossier.get('captured_at', '')}")
+                    pivots = dossier.get("verification_pivots", {})
+                    if pivots.get("reverse_image_search"):
+                        lines.append(f"- [Reverse-search thumbnail]({pivots['reverse_image_search']})")
+                    transcript = dossier["transcript"][:1200]
+                    lines.append("")
+                    lines.append("<details><summary>Timestamped transcript excerpt</summary>")
+                    lines.append("")
+                    lines.append("```text")
+                    lines.append(transcript)
+                    lines.append("```")
+                    lines.append("")
+                    lines.append("</details>")
                 lines.append("")
         sections.append("\n".join(lines))
 
@@ -447,7 +728,6 @@ def _build_media_appendix(images, videos, news, docs, social=None) -> str:
                 if item.get("platform") == "twitter" and item.get("results"):
                     lines.append(f"### X/Twitter\n{item['results']}")
                 elif item.get("url"):
-                    platform = item.get("platform", "").title()
                     title = item.get("title", "") or "Post"
                     snippet = item.get("snippet", "")
                     lines.append(f"- [{title}]({item['url']})" + (f" - *{snippet[:100]}*" if snippet else ""))
@@ -456,8 +736,8 @@ def _build_media_appendix(images, videos, news, docs, social=None) -> str:
     return "\n\n".join(sections)
 
 
-def event(kind: str, **data) -> dict:
-    return {"type": kind, **data}
+def event(event_type: str, **data) -> dict:
+    return {"type": event_type, **data}
 
 
 TOOL_SOURCE_MAP = {
@@ -592,13 +872,16 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
                 try:
                     parsed = json.loads(result)
                     if isinstance(parsed, list):
-                        events.append(event("tool_result", tool=tc.function.name, count=len(parsed)))
-                        if tc.function.name in key_map:
-                            media_key = key_map[tc.function.name]
-                            collected[media_key].extend(parsed)
-                            # Stream media to UI immediately
-                            if parsed:
-                                events.append(event("media", kind=media_key, items=parsed[:6]))
+                        if tc.function.name == "search_videos":
+                            _emit_video_results(parsed, collected, events)
+                        else:
+                            events.append(event("tool_result", tool=tc.function.name, count=len(parsed)))
+                            if tc.function.name in key_map:
+                                media_key = key_map[tc.function.name]
+                                collected[media_key].extend(parsed)
+                                # Stream media to UI immediately
+                                if parsed:
+                                    events.append(event("media", kind=media_key, items=parsed[:6]))
                     elif "error" in parsed:
                         if tc.function.name == "search_social":
                             collected["social"].append(parsed)
@@ -606,6 +889,8 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
                     else:
                         title = parsed.get("title", "") or parsed.get("video_id", "")
                         events.append(event("tool_result", tool=tc.function.name, title=title))
+                        if tc.function.name == "analyze_video_url":
+                            events.append(event("video_dossiers", items=[parsed]))
                 except Exception:
                     events.append(event("tool_result", tool=tc.function.name))
             continue
@@ -695,8 +980,19 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
     if plan:
         yield event("plan", content=plan)
 
+    collected = {"images": [], "videos": [], "news": [], "docs": [], "social": []}
+
+    # Videos are the core evidence lane for this tool. Run them deterministically
+    # before the LLM has a chance to finish with text-only research.
+    yield event("phase", name="Finding YouTube video evidence...")
+    prefetch_events = []
+    _prefetch_video_evidence(query, collected, prefetch_events, disabled_tools)
+    for ev in prefetch_events:
+        yield ev
+
     # Phase 3: Execute research
     yield event("phase", name="Researching...")
+    active_tools = _llm_tools_after_prefetch(active_tools, collected)
 
     # Build dynamic system prompt based on active tools
     active_tool_names = {t["function"]["name"] for t in active_tools}
@@ -727,6 +1023,11 @@ Your available tools:
 {chr(10).join(tool_lines)}
 
 Use web_research as your PRIMARY tool for factual investigation.{must_use_instruction}
+Treat video results as high-value evidence leads. When search_videos returns items with
+an evidence dossier, use the transcript timestamps, source/channel, publish date,
+and verification pivots in your findings. For human-rights topics, prioritize
+eyewitness footage, local-language titles, testimony, CCTV, drone footage, and
+news clips over generic explainers.
 
 When done, write a structured report in MARKDOWN (not JSON). Use this format:
 
@@ -738,6 +1039,10 @@ Key findings in 2-3 sentences.
 
 ## Key Findings
 Organized by theme with headers.
+
+## Video Evidence Leads
+For each strong video lead: title, source/channel, URL, relevant timestamped
+transcript excerpt, why it matters, and what still needs verification.
 
 ## Gaps
 What's still missing or unverified.
@@ -752,13 +1057,19 @@ Do NOT include images, videos, or documents sections. Those are appended automat
             f"{prior_knowledge}\n\n"
             "Use this as context but verify key claims with fresh sources."
         )
+    video_context = _prefetched_video_context(collected["videos"])
+    if video_context:
+        dynamic_prompt += (
+            "\n\n## Prefetched Video Evidence\n"
+            "These video leads were found before report writing. Use them in "
+            "the Video Evidence Leads section and assess what needs verification.\n"
+            f"{video_context}"
+        )
 
     messages = [
         {"role": "system", "content": dynamic_prompt},
         {"role": "user", "content": query},
     ]
-
-    collected = {"images": [], "videos": [], "news": [], "docs": [], "social": []}
 
     report_content = _run_agent_loop(client, model, messages, active_tools, collected, event_sink := [])
     for ev in event_sink:
@@ -804,10 +1115,16 @@ Do NOT include images, videos, or documents sections. Those are appended automat
             try:
                 parsed = json.loads(result)
                 if isinstance(parsed, list):
-                    collected[key].extend(parsed)
-                    yield event("tool_result", tool=tool_name, count=len(parsed))
-                    if parsed:
-                        yield event("media", kind=key, items=parsed[:6])
+                    if tool_name == "search_videos":
+                        bf_events = []
+                        _emit_video_results(parsed, collected, bf_events, tool_name=tool_name)
+                        for ev in bf_events:
+                            yield ev
+                    else:
+                        collected[key].extend(parsed)
+                        yield event("tool_result", tool=tool_name, count=len(parsed))
+                        if parsed:
+                            yield event("media", kind=key, items=parsed[:6])
             except Exception:
                 pass
 
