@@ -31,7 +31,7 @@ load_dotenv()
 
 log = logging.getLogger("agent")
 
-MODEL = os.environ.get("MODEL", "google/gemini-2.5-flash")
+MODEL = os.environ.get("MODEL", "google/gemini-3.1-flash-lite")
 LLM_TIMEOUT = 180.0
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 JINA_PREFIX = "https://r.jina.ai/"

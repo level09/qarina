@@ -57,7 +57,7 @@ Everything streams in real-time. You see each tool call as it happens.
 ```
 OPENROUTER_API_KEY=sk-or-v1-...     # Required. Get one at openrouter.ai
 SERPER_API_KEY=...                  # Required for images/videos/news/docs/social. Get one at serper.dev
-MODEL=google/gemini-2.5-flash       # Orchestrator model. UI selection overrides this per run.
+MODEL=google/gemini-3.1-flash-lite       # Orchestrator model. UI selection overrides this per run.
 ```
 
 ### Orchestrator model
@@ -65,7 +65,7 @@ MODEL=google/gemini-2.5-flash       # Orchestrator model. UI selection overrides
 The `MODEL` controls which LLM decides what tools to call and writes the final report. It does NOT do the web research (that's Sonar). Any OpenRouter model works:
 
 ```
-MODEL=google/gemini-2.5-flash       # Default. Good tool calling, long context, balanced cost.
+MODEL=google/gemini-3.1-flash-lite       # Default. New generation, cheap, good tool calling.
 MODEL=deepseek/deepseek-v4-flash    # Cheapest current DeepSeek V4 option for routine runs.
 MODEL=deepseek/deepseek-v4-pro      # Stronger DeepSeek V4 option for hard synthesis.
 MODEL=anthropic/claude-haiku-4.5    # Fast Claude option, higher token cost than V4 Flash.
@@ -85,9 +85,9 @@ Free/no-key lanes:
 - Jina Reader is used through `https://r.jina.ai/` for page extraction.
 - YouTube oEmbed and `youtube-transcript-api` are used for video dossiers and transcripts when public captions are available.
 
-Approximate public pricing checked May 11, 2026:
+Approximate public pricing checked July 11, 2026:
 
-- Gemini 2.5 Flash on OpenRouter: $0.30/M input tokens, $2.50/M output tokens.
+- Gemini 3.1 Flash Lite on OpenRouter: $0.25/M input tokens, $1.50/M output tokens.
 - DeepSeek V4 Flash on OpenRouter: $0.14/M input tokens, $0.28/M output tokens.
 - DeepSeek V4 Pro on OpenRouter: $0.435/M input tokens, $0.87/M output tokens.
 - Claude Haiku 4.5 on OpenRouter: $1/M input tokens, $5/M output tokens.
