@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/logo/seal.gif" alt="qarina" width="180">
+</p>
+
 # Qarina
 
 **qarina** (قرينة): Arabic legal term for a corroborating circumstance. Evidence that points toward the truth but must be verified before it can prove anything.
