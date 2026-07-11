@@ -10,7 +10,7 @@ uv run python main.py                # run server on :8000 (reload enabled)
 uv run python -m unittest discover tests   # run all tests
 uv run python -m unittest tests.test_video_dossiers.VideoDossierTests.test_extract_video_id_supports_common_youtube_urls   # run one test
 uv run ruff check .                  # lint (ruff_cache exists; project uses ruff)
-DOMAIN=research.example.org SERVER=root@host ./deploy.sh   # direct server deploy (uv + systemd + Caddy SSL + basic auth), no Docker
+DOMAIN=qarina.example.org SERVER=root@host ./deploy.sh   # direct server deploy (uv + systemd + Caddy SSL + basic auth), no Docker
 ```
 
 Required env vars in `.env`: `OPENROUTER_API_KEY`, `SERPER_API_KEY`, optional `MODEL` (orchestrator), `KNOWLEDGE_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `KNOWLEDGE_DIR`, `HISTORY_DB`.

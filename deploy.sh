@@ -2,29 +2,29 @@
 # Ignite-style direct deploy (no Docker): rsync the app to a fresh Ubuntu box,
 # provision uv + systemd + Caddy (auto-SSL + basic auth), start the service.
 #
-# First deploy:   DOMAIN=research.example.org SERVER=root@1.2.3.4 ./deploy.sh
+# First deploy:   DOMAIN=qarina.example.org SERVER=root@1.2.3.4 ./deploy.sh
 # Re-deploy:      SERVER=root@1.2.3.4 ./deploy.sh        (sync + restart only)
 # No domain yet:  DOMAIN=1.2.3.4 SERVER=root@1.2.3.4 ./deploy.sh   (plain HTTP)
 set -euo pipefail
 
-SERVER="${SERVER:?Usage: DOMAIN=research.example.org SERVER=root@host ./deploy.sh}"
+SERVER="${SERVER:?Usage: DOMAIN=qarina.example.org SERVER=root@host ./deploy.sh}"
 DOMAIN="${DOMAIN:-}"
-APP_USER=research
+APP_USER=qarina
 APP_DIR=/home/${APP_USER}/app
-SERVICE=research-agent
+SERVICE=qarina
 
 echo "==> Syncing project to ${SERVER}"
 rsync -az --delete \
   --exclude .git --exclude .venv --exclude __pycache__ --exclude .pytest_cache \
   --exclude .ruff_cache --exclude history.db --exclude knowledge_store \
-  ./ "${SERVER}:/tmp/research-app/"
+  ./ "${SERVER}:/tmp/qarina-app/"
 
 ssh "$SERVER" bash -s -- "$DOMAIN" << 'REMOTE'
 set -euo pipefail
 DOMAIN="$1"
-APP_USER=research
+APP_USER=qarina
 APP_DIR=/home/${APP_USER}/app
-SERVICE=research-agent
+SERVICE=qarina
 
 # ---- one-time provisioning ----
 if [ ! -f /etc/systemd/system/${SERVICE}.service ]; then
@@ -48,7 +48,7 @@ if [ ! -f /etc/systemd/system/${SERVICE}.service ]; then
     echo "==> systemd service"
     cat > /etc/systemd/system/${SERVICE}.service << EOF
 [Unit]
-Description=Research Agent
+Description=Qarina
 After=network.target
 
 [Service]
@@ -98,8 +98,8 @@ fi
 # ---- every deploy: sync code, install deps, restart ----
 echo "==> Installing app"
 mkdir -p "$APP_DIR"
-rsync -a --delete --exclude .venv --exclude .env --exclude history.db --exclude knowledge_store /tmp/research-app/ "$APP_DIR/"
-[ -f "$APP_DIR/.env" ] || { cp /tmp/research-app/.env "$APP_DIR/.env" 2>/dev/null || echo "!! No .env - create ${APP_DIR}/.env"; }
+rsync -a --delete --exclude .venv --exclude .env --exclude history.db --exclude knowledge_store /tmp/qarina-app/ "$APP_DIR/"
+[ -f "$APP_DIR/.env" ] || { cp /tmp/qarina-app/.env "$APP_DIR/.env" 2>/dev/null || echo "!! No .env - create ${APP_DIR}/.env"; }
 chown -R "${APP_USER}:${APP_USER}" "/home/${APP_USER}"
 sudo -u "$APP_USER" bash -c "cd $APP_DIR && uv sync --frozen --no-dev" >/dev/null
 systemctl restart ${SERVICE}

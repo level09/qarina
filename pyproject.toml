@@ -1,7 +1,7 @@
 [project]
-name = "research-agent"
+name = "qarina"
 version = "0.2.0"
-description = "Multi-source AI research agent with streaming UI"
+description = "Evidence-grade AI research assistant for human rights investigators"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

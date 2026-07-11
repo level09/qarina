@@ -1,6 +1,12 @@
-# Research Agent
+# Qarina
 
-Multi-source AI research agent. Type a question, get a report with images, videos, news, documents, and social media posts. Single HTML file, no framework, streams results over WebSocket.
+**qarina** (قرينة): Arabic legal term for a corroborating circumstance. Evidence that points toward the truth but must be verified before it can prove anything.
+
+Evidence-grade AI research assistant for human rights investigators. Type a question, get a report with images, videos, news, documents, and social media posts, plus a methodology record: every source cited, every page archived to the Wayback Machine, every report hashed. Single HTML file, no framework, streams results over WebSocket.
+
+Website: [qarina.org](https://qarina.org)
+
+**AI finds leads. Humans establish facts.**
 
 ## Quick Start
 
