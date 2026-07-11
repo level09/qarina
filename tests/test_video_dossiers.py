@@ -74,9 +74,8 @@ class VideoDossierTests(unittest.TestCase):
                 }
             ])
             collected = {"videos": []}
-            events = []
 
-            agent._prefetch_video_evidence("Syria testimony", collected, events, disabled_tools=set())
+            events = list(agent._prefetch_video_evidence("Syria testimony", collected, disabled_tools=set()))
 
             self.assertEqual(len(collected["videos"]), 1)
             self.assertEqual(events[0]["type"], "tool_call")

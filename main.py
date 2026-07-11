@@ -38,18 +38,45 @@ async def ws_research(ws: WebSocket):
     q = asyncio.Queue()
     loop = asyncio.get_running_loop()
 
-    def worker():
+    stop = threading.Event()
+
+    def put(ev):
         try:
-            for ev in run(query, config=config):
-                loop.call_soon_threadsafe(q.put_nowait, ev)
+            loop.call_soon_threadsafe(q.put_nowait, ev)
+        except RuntimeError:
+            pass  # event loop closed (shutdown/reload)
+
+    def worker():
+        gen = run(query, config=config)
+        try:
+            for ev in gen:
+                put(ev)
+                if stop.is_set():
+                    log.info("Research stopped (client gone or stop requested)")
+                    put({"type": "stopped"})
+                    break
         except Exception as e:
             log.error(f"Agent error: {e}", exc_info=True)
-            loop.call_soon_threadsafe(q.put_nowait, {"type": "error", "message": str(e)})
+            put({"type": "error", "message": str(e)})
         finally:
-            loop.call_soon_threadsafe(q.put_nowait, None)
+            gen.close()
+            put(None)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
+
+    async def reader():
+        # Detects disconnects immediately and handles client stop requests.
+        try:
+            while True:
+                msg = await ws.receive_json()
+                if msg.get("type") == "stop":
+                    log.info("Stop requested by client")
+                    stop.set()
+        except Exception:
+            stop.set()
+
+    reader_task = asyncio.ensure_future(reader())
 
     try:
         while True:
@@ -62,6 +89,8 @@ async def ws_research(ws: WebSocket):
     except Exception as e:
         log.error(f"WS send error: {e}", exc_info=True)
     finally:
+        stop.set()
+        reader_task.cancel()
         try:
             await ws.close()
         except Exception:
@@ -69,8 +98,11 @@ async def ws_research(ws: WebSocket):
 
 
 async def api_history_list(request):
-    limit = int(request.query_params.get("limit", 50))
-    offset = int(request.query_params.get("offset", 0))
+    try:
+        limit = min(max(int(request.query_params.get("limit", 50)), 1), 200)
+        offset = max(int(request.query_params.get("offset", 0)), 0)
+    except ValueError:
+        limit, offset = 50, 0
     return JSONResponse(history.list_sessions(limit, offset))
 
 

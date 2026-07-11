@@ -10,6 +10,7 @@ uv run python main.py                # run server on :8000 (reload enabled)
 uv run python -m unittest discover tests   # run all tests
 uv run python -m unittest tests.test_video_dossiers.VideoDossierTests.test_extract_video_id_supports_common_youtube_urls   # run one test
 uv run ruff check .                  # lint (ruff_cache exists; project uses ruff)
+DOMAIN=research.example.org SERVER=root@host ./deploy.sh   # direct server deploy (uv + systemd + Caddy SSL + basic auth), no Docker
 ```
 
 Required env vars in `.env`: `OPENROUTER_API_KEY`, `SERPER_API_KEY`, optional `MODEL` (orchestrator), `KNOWLEDGE_MODEL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`, `KNOWLEDGE_DIR`, `HISTORY_DB`.
@@ -31,9 +32,10 @@ index.html  --WS-->  main.py (ws_research)
 
 1. **Parallel prep** (ThreadPoolExecutor): `_generate_followups`, `knowledge.get_prior_knowledge`, `_generate_plan`.
 2. **Deterministic video prefetch** — `_prefetch_video_evidence` runs Serper video search with YouTube-biased query variants *before* the LLM loop, enriches top 3 YouTube results with `_analyze_video_url` (oEmbed metadata + `youtube-transcript-api` transcript + thumbnail pivots), and emits `media`/`video_dossiers` events. After this, `search_videos` is removed from the LLM's tool list so it doesn't redundantly call it.
-3. **LLM tool-calling loop** (`_run_agent_loop`) — OpenAI SDK pointed at OpenRouter. Each tool call/result is emitted as an event so the UI can render it live.
+3. **LLM tool-calling loop** (`_run_agent_loop`) — OpenAI SDK pointed at OpenRouter. It is a generator (`yield from` in `run()`); each tool call/result is yielded live so the UI renders it as it happens. On iteration exhaustion it forces a final no-tools report call instead of returning empty.
 4. **Media appendix** — `_build_media_appendix` injects collected media into the report server-side, so media always renders regardless of what the LLM wrote.
-5. **Persistence** — saves to `history.db` (SQLite via `history.py`) and indexes report into LightRAG (`knowledge.py`) in a background thread.
+5. **Evidence record** (`evidence.py`) — archives cited URLs to the Wayback Machine (existing snapshot or SavePageNow request) and appends a "Methodology & Collection Record" section: run timestamps, models, every tool invocation (tracked via the `_audit` wrapper in `run()`), collected counts, report SHA-256, archived links.
+6. **Persistence** — saves to `history.db` (SQLite via `history.py`) and indexes report into LightRAG (`knowledge.py`) in a background thread. The indexing thread is started with the pre-appendix report body bound via `args=` (a lambda would race with the appendix reassignment).
 
 ### Tool routing
 
@@ -41,9 +43,10 @@ Tools defined in `TOOLS` list, dispatched in `execute_tool()`:
 
 - `web_research` → Perplexity Sonar Pro via OpenRouter (`_sonar_research`)
 - `search_images` / `search_videos` / `search_news` / `search_documents` → Serper Google Search API
-- `search_social` with `platform=twitter` → **Grok 4.20 via OpenRouter with native X/web search plugin** (`_grok_x_search`). Other platforms → Serper site-filtered search.
+- `search_social` with `platform=twitter` → **Grok 4.20 via OpenRouter with native X/web search plugin** (`_grok_x_search`). `platform=telegram` → Serper site:t.me search, then discovered channels are searched via `t.me/s/<channel>?q=` through Jina (`_telegram_channel_posts`). Other platforms → Serper site-filtered search.
 - `read_page` → Jina Reader (`https://r.jina.ai/<url>`, no key)
-- `get_video_transcript` / `analyze_video_url` → `youtube-transcript-api` + YouTube oEmbed
+- `get_video_transcript` / `analyze_video_url` → `youtube-transcript-api` + YouTube oEmbed. YouTube blocks datacenter IPs — set `WEBSHARE_PROXY_USERNAME`/`WEBSHARE_PROXY_PASSWORD` on VPS deploys.
+- `think` → no-op reflection tool (echoes the reflection back); reduces redundant searches between rounds
 
 `TOOL_SOURCE_MAP` maps UI source toggles to tool names; disabled sources are stripped from `active_tools` before the LLM loop.
 
@@ -55,7 +58,7 @@ Tools defined in `TOOLS` list, dispatched in `execute_tool()`:
 
 ### Event types emitted by `agent.run()`
 
-`start`, `phase`, `followups`, `prior_knowledge`, `plan`, `tool_call`, `tool_result`, `tool_error`, `media` (images/videos/news/docs/social), `video_dossiers`, `markdown` (streamed report chunks), `done`, `error`. The frontend dispatches on `type`.
+`start`, `phase`, `followups`, `prior_knowledge`, `plan`, `thinking`, `tool_call`, `tool_result`, `tool_error`, `media` (images/videos/news/docs/social), `video_dossiers`, `report` (full report, one event), `saved`, `done`, `error`. The frontend dispatches on `type`. `main.py` adds `stopped` when a run is cancelled. The client may send `{"type": "stop"}` on the open WS to cancel; disconnects also cancel (a reader task sets a `threading.Event` checked between generator yields).
 
 ### Frontend routing
 

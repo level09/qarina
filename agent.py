@@ -9,6 +9,7 @@ Yields structured events for the UI via websocket.
 """
 
 import json
+import logging
 import os
 import re
 import sys
@@ -22,12 +23,16 @@ import httpx
 from openai import OpenAI
 from dotenv import load_dotenv
 
+import evidence
 import history
 import knowledge
 
 load_dotenv()
 
+log = logging.getLogger("agent")
+
 MODEL = os.environ.get("MODEL", "google/gemini-2.5-flash")
+LLM_TIMEOUT = 180.0
 SERPER_API_KEY = os.environ.get("SERPER_API_KEY", "")
 JINA_PREFIX = "https://r.jina.ai/"
 
@@ -204,6 +209,24 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "think",
+            "description": (
+                "Record a reflection between search rounds: what you have learned so far, "
+                "what is missing or contradictory, and what to search next. "
+                "Use this before launching more searches to avoid redundant queries."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reflection": {"type": "string", "description": "Your reflection on progress and next steps"},
+                },
+                "required": ["reflection"],
+            },
+        },
+    },
 ]
 
 http = httpx.Client(timeout=30.0)
@@ -214,6 +237,7 @@ def _sonar_research(query: str) -> str:
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
+        timeout=LLM_TIMEOUT,
     )
     response = client.chat.completions.create(
         model="perplexity/sonar-pro",
@@ -351,20 +375,22 @@ def _emit_video_results(parsed: list[dict], collected: dict, events: list[dict],
             events.append(event("video_dossiers", items=dossiers[:3]))
 
 
-def _prefetch_video_evidence(query: str, collected: dict, events: list[dict], disabled_tools: set):
+def _prefetch_video_evidence(query: str, collected: dict, disabled_tools: set) -> Generator[dict, None, None]:
     if "search_videos" in disabled_tools:
         return
-    events.append(event("tool_call", tool="search_videos", args={"query": query, "limit": 8}, label=f"(video evidence) {query[:80]}"))
+    yield event("tool_call", tool="search_videos", args={"query": query, "limit": 8}, label=f"(video evidence) {query[:80]}")
     result = execute_tool("search_videos", {"query": query, "limit": 8})
     try:
         parsed = json.loads(result)
     except json.JSONDecodeError:
-        events.append(event("tool_error", tool="search_videos", error="Video search returned invalid JSON"))
+        yield event("tool_error", tool="search_videos", error="Video search returned invalid JSON")
         return
     if isinstance(parsed, list):
-        _emit_video_results(parsed, collected, events)
+        evs = []
+        _emit_video_results(parsed, collected, evs)
+        yield from evs
     elif isinstance(parsed, dict) and parsed.get("error"):
-        events.append(event("tool_error", tool="search_videos", error=parsed["error"]))
+        yield event("tool_error", tool="search_videos", error=parsed["error"])
 
 
 def _prefetched_video_context(videos: list[dict]) -> str:
@@ -416,13 +442,24 @@ def _extract_video_id(url_or_id: str) -> str:
 
 
 def _youtube_transcript_entries(youtube_url: str) -> list[dict]:
-    """Get timestamped transcript entries from a YouTube video."""
+    """Get timestamped transcript entries from a YouTube video.
+
+    YouTube blocks datacenter IPs; set WEBSHARE_PROXY_USERNAME/PASSWORD
+    (residential rotating proxy) when deploying on a VPS.
+    """
     from youtube_transcript_api import YouTubeTranscriptApi
 
     video_id = _extract_video_id(youtube_url)
     if hasattr(YouTubeTranscriptApi, "get_transcript"):
         return _normalize_transcript_entries(YouTubeTranscriptApi.get_transcript(video_id))
-    return _normalize_transcript_entries(YouTubeTranscriptApi().fetch(video_id))
+    proxy_config = None
+    user = os.environ.get("WEBSHARE_PROXY_USERNAME")
+    password = os.environ.get("WEBSHARE_PROXY_PASSWORD")
+    if user and password:
+        from youtube_transcript_api.proxies import WebshareProxyConfig
+
+        proxy_config = WebshareProxyConfig(proxy_username=user, proxy_password=password)
+    return _normalize_transcript_entries(YouTubeTranscriptApi(proxy_config=proxy_config).fetch(video_id))
 
 
 def _normalize_transcript_entries(entries) -> list[dict]:
@@ -559,6 +596,29 @@ SITE_FILTERS = {
 }
 
 
+def _telegram_channel_posts(query: str, channels: list[str]) -> list[dict]:
+    """Search public Telegram channel previews (t.me/s/<channel>?q=) via Jina."""
+    results = []
+    for chan in channels[:2]:
+        try:
+            r = http.get(f"{JINA_PREFIX}https://t.me/s/{chan}?q={quote(query)}", headers={"Accept": "text/markdown"})
+            r.raise_for_status()
+            text = r.text.strip()
+            if text:
+                results.append({
+                    "url": f"https://t.me/s/{chan}",
+                    "title": f"@{chan} posts matching query",
+                    "snippet": text[:1500],
+                    "platform": "telegram",
+                })
+        except Exception:
+            continue
+    return results
+
+
+_TG_NON_CHANNELS = {"share", "joinchat", "addstickers", "proxy", "socks"}
+
+
 def _search_social(query: str, platform: str) -> str:
     """Search social media. Twitter uses Grok, others use Serper with site: filter."""
     if platform == "twitter":
@@ -579,6 +639,15 @@ def _search_social(query: str, platform: str) -> str:
         }
         for item in data
     ]
+
+    if platform == "telegram":
+        channels = []
+        for item in results:
+            m = re.search(r"t\.me/(?:s/)?([A-Za-z0-9_]{4,32})", item.get("url", ""))
+            if m and m.group(1).lower() not in _TG_NON_CHANNELS and m.group(1) not in channels:
+                channels.append(m.group(1))
+        results.extend(_telegram_channel_posts(query, channels))
+
     return json.dumps(results, indent=2)
 
 
@@ -587,6 +656,7 @@ def _grok_x_search(query: str) -> str:
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
+        timeout=LLM_TIMEOUT,
     )
     response = client.chat.completions.create(
         model="x-ai/grok-4.20",
@@ -596,7 +666,9 @@ def _grok_x_search(query: str) -> str:
                 "content": (
                     "Search X/Twitter for relevant posts, threads, and discussions. "
                     "Return the most relevant tweets with usernames, dates, and content. "
-                    "Include URLs to the original tweets when possible."
+                    "Include URLs to the original tweets when possible. "
+                    "If the topic concerns an Arabic-speaking region, search in both "
+                    "English and Arabic and include Arabic-language posts."
                 ),
             },
             {"role": "user", "content": f"Search X/Twitter for: {query}"},
@@ -637,6 +709,8 @@ def execute_tool(name: str, args: dict) -> str:
             ), indent=2)
         elif name == "search_social":
             return _search_social(args["query"], args["platform"])
+        elif name == "think":
+            return json.dumps({"reflection_recorded": args.get("reflection", "")[:2000]})
         else:
             return json.dumps({"error": f"Unknown tool: {name}"})
     except httpx.HTTPStatusError as e:
@@ -825,14 +899,14 @@ def _ensure_markdown(content: str) -> str:
     return "\n".join(lines) if lines else content
 
 
-def _run_agent_loop(client, model, messages, active_tools, collected, events):
-    """Run the core tool-calling loop. Appends events to the list, returns report content."""
+def _run_agent_loop(client, model, messages, active_tools, collected) -> Generator[dict, None, str]:
+    """Run the core tool-calling loop. Yields events live, returns report content."""
     iteration = 0
     max_iterations = 12
 
     while iteration < max_iterations:
         iteration += 1
-        events.append(event("thinking", iteration=iteration))
+        yield event("thinking", iteration=iteration)
 
         response = client.chat.completions.create(
             model=model,
@@ -853,15 +927,25 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
                 "search_social": "social",
             }
 
+            # Models occasionally emit malformed arguments; never let that kill the run
+            parsed_args = {}
+            for tc in msg.tool_calls:
+                try:
+                    parsed_args[tc.id] = json.loads(tc.function.arguments)
+                except json.JSONDecodeError:
+                    parsed_args[tc.id] = None
+
             # Log all tool calls first
             for tc in msg.tool_calls:
-                args = json.loads(tc.function.arguments)
-                label = args.get("query") or args.get("url") or args.get("youtube_url", "")
-                events.append(event("tool_call", tool=tc.function.name, args=args, label=label[:120]))
+                args = parsed_args[tc.id] or {}
+                label = args.get("query") or args.get("url") or args.get("youtube_url") or args.get("reflection", "")
+                yield event("tool_call", tool=tc.function.name, args=args, label=label[:120])
 
             # Execute tools in parallel
             def _exec(tc):
-                args = json.loads(tc.function.arguments)
+                args = parsed_args[tc.id]
+                if args is None:
+                    return tc, json.dumps({"error": "invalid tool arguments (malformed JSON)"})
                 return tc, execute_tool(tc.function.name, args)
 
             with ThreadPoolExecutor(max_workers=6) as pool:
@@ -873,26 +957,28 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
                     parsed = json.loads(result)
                     if isinstance(parsed, list):
                         if tc.function.name == "search_videos":
-                            _emit_video_results(parsed, collected, events)
+                            evs = []
+                            _emit_video_results(parsed, collected, evs)
+                            yield from evs
                         else:
-                            events.append(event("tool_result", tool=tc.function.name, count=len(parsed)))
+                            yield event("tool_result", tool=tc.function.name, count=len(parsed))
                             if tc.function.name in key_map:
                                 media_key = key_map[tc.function.name]
                                 collected[media_key].extend(parsed)
                                 # Stream media to UI immediately
                                 if parsed:
-                                    events.append(event("media", kind=media_key, items=parsed[:6]))
+                                    yield event("media", kind=media_key, items=parsed[:6])
                     elif "error" in parsed:
                         if tc.function.name == "search_social":
                             collected["social"].append(parsed)
-                        events.append(event("tool_error", tool=tc.function.name, error=parsed["error"]))
+                        yield event("tool_error", tool=tc.function.name, error=parsed["error"])
                     else:
                         title = parsed.get("title", "") or parsed.get("video_id", "")
-                        events.append(event("tool_result", tool=tc.function.name, title=title))
+                        yield event("tool_result", tool=tc.function.name, title=title)
                         if tc.function.name == "analyze_video_url":
-                            events.append(event("video_dossiers", items=[parsed]))
+                            yield event("video_dossiers", items=[parsed])
                 except Exception:
-                    events.append(event("tool_result", tool=tc.function.name))
+                    yield event("tool_result", tool=tc.function.name)
             continue
 
         content = msg.content or ""
@@ -914,7 +1000,18 @@ def _run_agent_loop(client, model, messages, active_tools, collected, events):
         content = _ensure_markdown(content)
         return content
 
-    return ""
+    # Iteration budget exhausted: salvage the run instead of discarding it
+    yield event("thinking", iteration=iteration)
+    messages.append({
+        "role": "user",
+        "content": "Stop researching. Write the final report NOW in the required markdown format, using everything gathered so far.",
+    })
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=4096,
+        messages=messages,
+    )
+    return _ensure_markdown(response.choices[0].message.content or "")
 
 
 def run(query: str, config: dict = None) -> Generator[dict, None, None]:
@@ -933,9 +1030,28 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
     client = OpenAI(
         base_url="https://openrouter.ai/api/v1",
         api_key=os.environ["OPENROUTER_API_KEY"],
+        timeout=LLM_TIMEOUT,
     )
 
     yield event("start", query=query, model=model)
+
+    started_at = datetime.now(timezone.utc)
+    tool_log = []
+
+    def _audit(gen):
+        """Pass events through, recording tool calls for the methodology appendix."""
+        while True:
+            try:
+                ev = next(gen)
+            except StopIteration as s:
+                return s.value
+            if ev.get("type") == "tool_call":
+                tool_log.append({
+                    "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                    "tool": ev.get("tool", ""),
+                    "label": ev.get("label", ""),
+                })
+            yield ev
 
     # Phase 1: Run followups, knowledge check, and plan in parallel
     yield event("phase", name="Preparing research...")
@@ -985,10 +1101,7 @@ def run(query: str, config: dict = None) -> Generator[dict, None, None]:
     # Videos are the core evidence lane for this tool. Run them deterministically
     # before the LLM has a chance to finish with text-only research.
     yield event("phase", name="Finding YouTube video evidence...")
-    prefetch_events = []
-    _prefetch_video_evidence(query, collected, prefetch_events, disabled_tools)
-    for ev in prefetch_events:
-        yield ev
+    yield from _audit(_prefetch_video_evidence(query, collected, disabled_tools))
 
     # Phase 3: Execute research
     yield event("phase", name="Researching...")
@@ -1023,6 +1136,11 @@ Your available tools:
 {chr(10).join(tool_lines)}
 
 Use web_research as your PRIMARY tool for factual investigation.{must_use_instruction}
+Between search rounds, use the think tool to note what you have learned, what is
+missing or contradictory, and what to search next - avoid repeating queries.
+When the topic concerns an Arabic-speaking region, also search in Arabic (Modern
+Standard and local dialect terms), especially for social media and video searches -
+eyewitness material is usually posted in the local language first.
 Treat video results as high-value evidence leads. When search_videos returns items with
 an evidence dossier, use the transcript timestamps, source/channel, publish date,
 and verification pivots in your findings. For human-rights topics, prioritize
@@ -1071,9 +1189,7 @@ Do NOT include images, videos, or documents sections. Those are appended automat
         {"role": "user", "content": query},
     ]
 
-    report_content = _run_agent_loop(client, model, messages, active_tools, collected, event_sink := [])
-    for ev in event_sink:
-        yield ev
+    report_content = yield from _audit(_run_agent_loop(client, model, messages, active_tools, collected))
 
     # Phase 4: Gap analysis and second pass
     if report_content and "Gaps" in report_content:
@@ -1087,9 +1203,7 @@ Do NOT include images, videos, or documents sections. Those are appended automat
                 "incorporating the new findings. Keep the same structure."
             ),
         })
-        report_content = _run_agent_loop(client, model, messages, active_tools, collected, event_sink2 := [])
-        for ev in event_sink2:
-            yield ev
+        report_content = yield from _audit(_run_agent_loop(client, model, messages, active_tools, collected))
 
     # Backfill: force-call any enabled media tools that returned nothing
     backfill = {
@@ -1102,6 +1216,11 @@ Do NOT include images, videos, or documents sections. Those are appended automat
     backfill_needed = {tn: k for tn, k in backfill.items() if not collected[k] and tn not in disabled_tools}
     if backfill_needed:
         for tn in backfill_needed:
+            tool_log.append({
+                "ts": datetime.now(timezone.utc).strftime("%H:%M:%S"),
+                "tool": tn,
+                "label": f"(backfill) {query[:80]}",
+            })
             yield event("tool_call", tool=tn, args={"query": query}, label=f"(backfill) {query[:80]}")
 
         def _backfill(tool_name):
@@ -1128,12 +1247,17 @@ Do NOT include images, videos, or documents sections. Those are appended automat
             except Exception:
                 pass
 
-    # Index report into knowledge graph (background, don't block response)
+    # Index report into knowledge graph (background, don't block response).
+    # args= binds the pre-appendix content now; a lambda would race with the
+    # appendix reassignment below and sometimes index media markup.
     if report_content:
         threading.Thread(
-            target=lambda: knowledge.index_report(query, report_content),
+            target=knowledge.index_report,
+            args=(query, report_content),
             daemon=True,
         ).start()
+
+    report_body = report_content or ""
 
     # Append media
     appendix = _build_media_appendix(
@@ -1143,14 +1267,26 @@ Do NOT include images, videos, or documents sections. Those are appended automat
     if appendix:
         report_content = (report_content or "").rstrip() + "\n\n" + appendix
 
+    # Archive cited sources and append the collection record (best effort)
+    if report_body:
+        yield event("phase", name="Archiving cited sources...")
+        try:
+            archives = evidence.archive_cited(report_body)
+            report_content = report_content.rstrip() + "\n\n" + evidence.methodology_appendix(
+                query, model, started_at, tool_log, collected, report_body, archives
+            )
+        except Exception as e:
+            log.warning(f"Evidence appendix failed: {e}")
+
     yield event("report", content=report_content or "No results found.")
 
     # Save to history
     try:
         session_id = history.save(query, report_content or "", model, sources)
         yield event("saved", session_id=session_id)
-    except Exception:
-        pass
+    except Exception as e:
+        log.error(f"History save failed: {e}", exc_info=True)
+        yield event("tool_error", tool="history", error="Report could not be saved to history")
 
     yield event("done")
 

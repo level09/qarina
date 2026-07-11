@@ -25,16 +25,18 @@ EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "1536"))
 _rag = None
 _loop = None
 _lock = threading.Lock()
+_loop_lock = threading.Lock()  # separate: _get_rag holds _lock while calling _run
 _init_failed = False
 
 
 def _ensure_loop():
     global _loop
-    if _loop is None or _loop.is_closed():
-        _loop = asyncio.new_event_loop()
-        t = threading.Thread(target=_loop.run_forever, daemon=True)
-        t.start()
-    return _loop
+    with _loop_lock:
+        if _loop is None or _loop.is_closed():
+            _loop = asyncio.new_event_loop()
+            t = threading.Thread(target=_loop.run_forever, daemon=True)
+            t.start()
+        return _loop
 
 
 def _run(coro, timeout=120):
@@ -122,13 +124,13 @@ def _get_rag():
 
 
 def index_report(query: str, report: str):
-    """Index a research report into the knowledge graph."""
+    """Index a research report into the knowledge graph.
+
+    Callers must pass the report body without the media appendix.
+    """
     if not report or len(report) < 100:
         return
-    # Strip media appendix before indexing
-    clean = report.split("\n---\n")[0].strip()
-    if len(clean) < 100:
-        return
+    clean = report.strip()
     rag = _get_rag()
     if not rag:
         return

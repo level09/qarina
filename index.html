@@ -4,11 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Research Agent</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='28' fill='%234285f4'/%3E%3Cpath d='M32 4a28 28 0 0 1 19.8 47.8L32 32z' fill='%2334a853'/%3E%3Cpath d='M12.2 51.8A28 28 0 0 1 32 4v28z' fill='%23ea4335'/%3E%3Cpath d='M32 32 51.8 51.8A28 28 0 0 1 12.2 51.8z' fill='%23fbbc04'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='44 38 180 180'%3E%3Ccircle fill='%23dd4c3a' cx='133.93' cy='75.94' r='32'/%3E%3Ccircle fill='%23efb13e' cx='90.17' cy='153.75' r='32'/%3E%3Ccircle fill='%2352a156' cx='178.17' cy='153.76' r='32'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.20.0/dist/tabler-icons.min.css">
 <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -69,15 +70,8 @@
   }
   header .logo {
     width: 34px; height: 34px;
-    background:
-      linear-gradient(135deg, #4285f4 0 45%, transparent 45%),
-      linear-gradient(225deg, #34a853 0 45%, transparent 45%),
-      linear-gradient(315deg, #fbbc04 0 45%, transparent 45%),
-      linear-gradient(45deg, #ea4335 0 45%, #ffffff 45%);
-    border: 1px solid var(--border-light);
-    border-radius: 50%;
-    box-shadow: none;
     display: block;
+    flex-shrink: 0;
   }
   .home-link {
     display: inline-flex;
@@ -222,6 +216,7 @@
   }
   .tab .tab-status.done { background: var(--green); }
   .tab .tab-status.error { background: var(--red); }
+  .tab .tab-status.stopped { background: var(--text3); }
   .tab .tab-close {
     width: 16px; height: 16px;
     display: grid; place-items: center;
@@ -269,7 +264,7 @@
     top: 73px;
     z-index: 8;
     display: grid;
-    grid-template-columns: auto 1fr auto;
+    grid-template-columns: auto 1fr auto auto;
     align-items: center;
     gap: 12px;
     margin-bottom: 10px;
@@ -350,6 +345,44 @@
     transform: none;
     width: 100%;
   }
+  .live-status.stopped .live-dot {
+    background: var(--surface2);
+    color: var(--text2);
+  }
+  .live-status.stopped .live-dot::after {
+    content: none;
+  }
+  .live-status.stopped .live-meter span {
+    background: var(--text3);
+    animation: none;
+    transform: none;
+    width: 100%;
+  }
+  .live-status .stop-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    min-height: 30px;
+    padding: 5px 12px;
+    font-family: var(--font-body);
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--text2);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .live-status .stop-btn:hover:not(:disabled) {
+    border-color: var(--red);
+    color: var(--red);
+    background: var(--red-bg);
+  }
+  .live-status .stop-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .live-status .stop-btn i { font-size: 14px; }
+  .live-status.error .stop-btn,
+  .live-status.stopped .stop-btn { display: none; }
   .live-added {
     animation: liveAppend 0.55s cubic-bezier(0.16, 1, 0.3, 1);
   }
@@ -1120,7 +1153,11 @@
 
 <header>
   <a href="/" class="home-link" id="home-link" title="New research">
-    <div class="logo" aria-hidden="true"></div>
+    <svg class="logo" viewBox="50 38 165 158" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle fill="#dd4c3a" cx="133.93" cy="75.94" r="32"/>
+      <circle fill="#efb13e" cx="90.17" cy="153.75" r="32"/>
+      <circle fill="#52a156" cx="178.17" cy="153.76" r="32"/>
+    </svg>
     <h1>Research Agent</h1>
   </a>
   <span class="tag" id="model-tag">ready</span>
@@ -1218,6 +1255,8 @@ function createTab(query, opts = {}) {
     status: opts.status || 'running',
     sessionId: opts.sessionId || null,
     reportMd: '',
+    gotReport: false,
+    stopped: false,
     ws: null,
     eventCount: 0,
     lastActivityAt: Date.now(),
@@ -1241,6 +1280,7 @@ function createTab(query, opts = {}) {
         <div class="live-title">Connecting...</div>
         <div class="live-meta">Waiting for the first update.</div>
       </div>
+      <button class="stop-btn" type="button" title="Stop research"><i class="ti ti-player-stop"></i> Stop</button>
       <div class="live-meter" aria-hidden="true"><span></span></div>
     `;
     panel.appendChild(status);
@@ -1336,8 +1376,6 @@ function showHome({ push = false } = {}) {
   panels.querySelectorAll('.tab-panel:not(#panel-empty)').forEach(p => p.remove());
   const empty = $('#panel-empty');
   if (empty) empty.classList.add('active');
-  sessionStorage.removeItem('openTabs');
-  sessionStorage.removeItem('activeSessionId');
   modelTag.textContent = 'ready';
   if (push) {
     history.pushState(null, '', '/');
@@ -1411,6 +1449,13 @@ function go() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   tab.ws = ws;
+
+  const stopBtn = $(`#status-${id} .stop-btn`);
+  if (stopBtn) stopBtn.addEventListener('click', () => {
+    if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'stop' }));
+    stopBtn.disabled = true;
+    setStatus('Stopping...');
+  });
 
   ws.onopen = () => {
     ws.send(JSON.stringify({ query: q, config: getConfig() }));
@@ -1494,9 +1539,9 @@ function go() {
       const strip = document.createElement('div');
       strip.className = `media-strip ${ev.kind}-strip`;
       ev.items.forEach(item => {
-        const url = item.url || item.img_src || '';
+        const url = safeUrl(item.url || item.img_src);
         const title = item.title || '';
-        const thumb = item.thumbnail || item.img_src || url;
+        const thumb = safeUrl(item.thumbnail || item.img_src || url);
         const source = item.source || item.domain || '';
         const date = item.date || '';
         const duration = item.duration || '';
@@ -1519,12 +1564,12 @@ function go() {
             <div class="media-title">${escHtml(title)}</div>`;
         } else if (ev.kind === 'videos') {
           card.innerHTML = `
-            <div class="media-thumb" onclick="window.open('${escHtml(url)}','_blank')">
+            <div class="media-thumb" data-action="open" data-url="${escHtml(url)}">
               <img src="${escHtml(thumb)}" alt="${escHtml(title)}" loading="lazy" onerror="this.style.display='none'">
               ${source ? `<span class="source-badge">${escHtml(source)}</span>` : ''}
               ${duration ? `<span class="badge">${escHtml(duration)}</span>` : ''}
               <div class="media-actions">
-                <span class="act-btn" title="Open video" onclick="event.stopPropagation();window.open('${escHtml(url)}','_blank')"><i class="ti ti-player-play"></i></span>
+                <span class="act-btn" title="Open video" data-action="open" data-url="${escHtml(url)}"><i class="ti ti-player-play"></i></span>
                 <span class="act-btn" title="Copy URL" data-action="copy" data-url="${escHtml(url)}"><i class="ti ti-link"></i></span>
               </div>
             </div>
@@ -1532,7 +1577,7 @@ function go() {
             ${date ? `<div class="media-date">${escHtml(date)}</div>` : ''}`;
         } else {
           card.innerHTML = `
-            <div class="media-title" style="cursor:pointer" onclick="window.open('${escHtml(url)}','_blank')"><strong>${escHtml(title)}</strong></div>
+            <div class="media-title" style="cursor:pointer" data-action="open" data-url="${escHtml(url)}"><strong>${escHtml(title)}</strong></div>
             ${source || date ? `<div class="media-date">${escHtml([source, date].filter(Boolean).join(' · '))}</div>` : ''}`;
         }
         strip.appendChild(card);
@@ -1546,6 +1591,7 @@ function go() {
           if (action === 'lightbox') openLightbox(btn.dataset.img, btn.dataset.source);
           if (action === 'download') downloadUrl(btn.dataset.url, btn.dataset.name);
           if (action === 'copy') copyToClipboard(btn.dataset.url);
+          if (action === 'open') window.open(safeUrl(btn.dataset.url), '_blank', 'noopener');
         });
       });
 
@@ -1567,6 +1613,8 @@ function go() {
         const meta = [dossier.source, dossier.date, dossier.duration].filter(Boolean).join(' · ');
         const transcript = dossier.transcript || dossier.transcript_error || 'Transcript unavailable';
         const pivots = dossier.verification_pivots || {};
+        const dossierUrl = safeUrl(dossier.url);
+        const reverseUrl = safeUrl(pivots.reverse_image_search);
         card.innerHTML = `
           <div class="dossier-head">
             <div class="dossier-icon"><i class="ti ti-player-play"></i></div>
@@ -1577,8 +1625,8 @@ function go() {
           </div>
           <div class="dossier-transcript">${escHtml(firstTranscriptLines(transcript, 5))}</div>
           <div class="dossier-actions">
-            ${dossier.url ? `<a href="${escHtml(dossier.url)}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Open</a>` : ''}
-            ${pivots.reverse_image_search ? `<a href="${escHtml(pivots.reverse_image_search)}" target="_blank" rel="noopener"><i class="ti ti-search"></i> Reverse image</a>` : ''}
+            ${dossierUrl ? `<a href="${escHtml(dossierUrl)}" target="_blank" rel="noopener"><i class="ti ti-external-link"></i> Open</a>` : ''}
+            ${reverseUrl ? `<a href="${escHtml(reverseUrl)}" target="_blank" rel="noopener"><i class="ti ti-search"></i> Reverse image</a>` : ''}
             <button type="button" data-dossier-index="${idx}"><i class="ti ti-download"></i> Evidence JSON</button>
           </div>
         `;
@@ -1612,6 +1660,7 @@ function go() {
       const statusEl = $(`#status-${id}`);
       if (statusEl) setStatus('Report ready. Saving session...');
       tab.reportMd = ev.content;
+      tab.gotReport = true;
       const panel = $(`#panel-${id}`);
       if (!panel) return;
 
@@ -1647,11 +1696,23 @@ function go() {
     }
 
     if (ev.type === 'done') {
+      tab.gotReport = true;
       const statusEl = $(`#status-${id}`);
       if (statusEl) statusEl.remove();
       stopLiveTimer(tab);
       updateTabStatus(id, 'done');
       saveTabs();
+    }
+
+    if (ev.type === 'stopped') {
+      tab.stopped = true;
+      const statusEl = $(`#status-${id}`);
+      if (statusEl) {
+        statusEl.classList.add('stopped');
+        setStatus('Stopped by user');
+      }
+      stopLiveTimer(tab);
+      updateTabStatus(id, 'stopped');
     }
   };
 
@@ -1666,11 +1727,23 @@ function go() {
   };
 
   ws.onclose = () => {
-    if (tabs.find(t => t.id === id)?.status === 'running') {
-      const statusEl = $(`#status-${id}`);
+    // A stopped session is terminal; never overwrite it with the connection-lost error
+    if (tab.stopped || tabs.find(t => t.id === id)?.status !== 'running') return;
+    stopLiveTimer(tab);
+    const statusEl = $(`#status-${id}`);
+    if (tab.gotReport) {
       if (statusEl) statusEl.remove();
-      stopLiveTimer(tab);
       updateTabStatus(id, 'done');
+    } else {
+      if (statusEl) {
+        statusEl.classList.add('error');
+        setStatus('Connection lost');
+      }
+      const el = document.createElement('div');
+      el.className = 'step';
+      el.innerHTML = '<div class="icon err"><i class="ti ti-alert-triangle"></i></div><div class="label"><strong>Error</strong> Connection lost before the report arrived. Try running the query again.</div>';
+      appendToFeed(el);
+      updateTabStatus(id, 'error');
     }
   };
 
@@ -1685,14 +1758,19 @@ marked.setOptions({
   breaks: true,
 });
 const renderer = new marked.Renderer();
-renderer.link = ({ href, text }) =>
-  `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
-renderer.image = ({ href, text }) =>
-  `<img src="${href}" alt="${text || ''}" loading="lazy">`;
+renderer.link = ({ href, text }) => {
+  const url = safeUrl(href);
+  return url ? `<a href="${escHtml(url)}" target="_blank" rel="noopener">${text}</a>` : text;
+};
+renderer.image = ({ href, text }) => {
+  const url = safeUrl(href);
+  return url ? `<img src="${escHtml(url)}" alt="${escHtml(text || '')}" loading="lazy">` : '';
+};
 marked.use({ renderer });
 
 function md(text) {
-  return marked.parse(text || '');
+  // ADD_ATTR keeps target=_blank from the custom link renderer (DOMPurify strips it by default)
+  return DOMPurify.sanitize(marked.parse(text || ''), { ADD_ATTR: ['target'] });
 }
 
 function enhanceReportImages(report) {
@@ -1720,9 +1798,17 @@ function enhanceReportImages(report) {
 }
 
 function escHtml(s) {
-  const d = document.createElement('div');
-  d.textContent = s;
-  return d.innerHTML;
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeUrl(u) {
+  u = String(u || '').trim();
+  return /^https?:/i.test(u) ? u : '';
 }
 
 function getConfig() {
@@ -1788,13 +1874,17 @@ function firstTranscriptLines(text, maxLines) {
     .join('\n');
 }
 
+// --- Toast ---
+function showToast(msg, ms = 1500) {
+  const toast = $('#copy-toast');
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), ms);
+}
+
 // --- Copy to clipboard ---
 function copyToClipboard(text) {
-  navigator.clipboard.writeText(text).then(() => {
-    const toast = $('#copy-toast');
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 1500);
-  });
+  navigator.clipboard.writeText(text).then(() => showToast('Copied to clipboard'));
 }
 
 // --- URL routing & tab persistence ---
@@ -1807,34 +1897,35 @@ function saveTabs() {
 }
 
 async function restoreTabs() {
-  // Check URL first: /research/:id
+  // Read before restoring: createTab -> saveTabs() overwrites activeSessionId mid-loop
+  const activeId = Number(sessionStorage.getItem('activeSessionId'));
+
+  // Restore saved tabs from sessionStorage first
+  const saved = sessionStorage.getItem('openTabs');
+  if (saved) {
+    try {
+      const data = JSON.parse(saved);
+      for (const item of data) {
+        await openHistorySession(item.sessionId, { silent: true });
+      }
+    } catch (e) {
+      console.error('Tab restore failed', e);
+    }
+  }
+
+  // /research/:id opens/activates the requested session (dedupes if already restored)
   const match = location.pathname.match(/^\/research\/(\d+)$/);
   if (match) {
     await openHistorySession(Number(match[1]));
     return;
   }
 
-  if (location.pathname === '/') {
+  // At '/': switch to previously active tab, or show home if nothing restored
+  const t = tabs.find(t => t.sessionId === activeId);
+  if (t) {
+    switchTab(t.id);
+  } else if (!tabs.length) {
     showHome();
-    return;
-  }
-
-  // Restore tabs from sessionStorage
-  const saved = sessionStorage.getItem('openTabs');
-  if (!saved) return;
-  try {
-    const data = JSON.parse(saved);
-    const activeId = sessionStorage.getItem('activeSessionId');
-    for (const item of data) {
-      await openHistorySession(item.sessionId, { silent: true });
-    }
-    // Switch to previously active tab
-    if (activeId) {
-      const t = tabs.find(t => t.sessionId === Number(activeId));
-      if (t) switchTab(t.id);
-    }
-  } catch (e) {
-    console.error('Tab restore failed', e);
   }
 }
 
@@ -1874,6 +1965,9 @@ restoreTabs();
 
 $('#home-link').addEventListener('click', (e) => {
   e.preventDefault();
+  // Explicit home click is the only path that discards saved tabs
+  sessionStorage.removeItem('openTabs');
+  sessionStorage.removeItem('activeSessionId');
   showHome({ push: true });
 });
 
@@ -1941,8 +2035,11 @@ async function openHistorySession(id, opts = {}) {
 
   try {
     const res = await fetch(`/api/history/${id}`);
-    const session = await res.json();
-    if (!session.report) return;
+    const session = res.ok ? await res.json() : null;
+    if (!session || session.error || !session.report) {
+      if (!opts.silent) showToast('Session not found', 2500);
+      return;
+    }
 
     if (!opts.silent) drawerOverlay.classList.remove('open');
 
@@ -1976,6 +2073,7 @@ async function openHistorySession(id, opts = {}) {
     updateTabStatus(tab.id, 'done');
   } catch (err) {
     console.error('Failed to load session', err);
+    if (!opts.silent) showToast('Could not load session', 2500);
   }
 }
 </script>
